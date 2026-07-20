@@ -91,7 +91,7 @@ mod tests {
             "embedding": vec![0.1_f32; 1024]
         });
 
-        let mock_server = mockito::Server::new_async().await;
+        let mut mock_server = mockito::Server::new_async().await;
         let mock_endpoint = mock_server
             .mock("POST", "/")
             .with_status(200)
@@ -112,7 +112,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_embedding_http_error() {
-        let mock_server = mockito::Server::new_async().await;
+        let mut mock_server = mockito::Server::new_async().await;
         let _mock_endpoint = mock_server
             .mock("POST", "/")
             .with_status(500)
@@ -134,7 +134,7 @@ mod tests {
             "embedding": vec![0.0_f32; 1024]
         });
 
-        let mock_server = mockito::Server::new_async().await;
+        let mut mock_server = mockito::Server::new_async().await;
         let mock_endpoint = mock_server
             .mock("POST", "/")
             .with_status(200)
