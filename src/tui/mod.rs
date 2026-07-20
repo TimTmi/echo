@@ -3,7 +3,11 @@
 //! ratatui-based terminal user interface.
 //! Provides the main application loop, event handling, and screen rendering.
 
+pub mod collection_browser;
+
+use crate::qdrant::QdrantClient;
 use anyhow::Context;
+use collection_browser::CollectionBrowserScreen;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -17,6 +21,14 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use std::io::stdout;
 use std::time::{Duration, Instant};
 
+/// Represents the active screen in the application.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum ActiveScreen {
+    #[default]
+    Home,
+    Collections,
+}
+
 /// Application state for the TUI.
 pub struct App {
     /// Whether the application should exit the main loop.
@@ -25,6 +37,12 @@ pub struct App {
     pub started_at: Instant,
     /// Any error message to display (cleared after next render).
     pub error_message: Option<String>,
+    /// Current screen being displayed.
+    active_screen: ActiveScreen,
+    /// Qdrant client for API calls.
+    qdrant_client: QdrantClient,
+    /// Collection browser screen state.
+    collection_browser: CollectionBrowserScreen,
 }
 
 impl Default for App {
@@ -33,6 +51,9 @@ impl Default for App {
             should_quit: false,
             started_at: Instant::now(),
             error_message: None,
+            active_screen: ActiveScreen::default(),
+            qdrant_client: QdrantClient::new("http://localhost:6333"),
+            collection_browser: CollectionBrowserScreen::new(),
         }
     }
 }
@@ -41,6 +62,12 @@ impl App {
     /// Create a new App with default state.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the Qdrant client (used for configuring with a different URL).
+    pub fn with_qdrant_client(mut self, client: QdrantClient) -> Self {
+        self.qdrant_client = client;
+        self
     }
 
     /// Run the main TUI event loop. This function takes full control of the terminal,
@@ -78,6 +105,9 @@ impl App {
     ) -> anyhow::Result<()> {
         let tick_rate = Duration::from_millis(250);
 
+        // Trigger initial data load for active screen
+        self.on_screen_enter();
+
         loop {
             // Draw the UI
             terminal.draw(|frame| self.render(frame.area(), frame))?;
@@ -90,12 +120,37 @@ impl App {
                 self.handle_event(event)?;
             }
 
+            // Tick the active screen for async loading
+            self.tick();
+
             if self.should_quit {
                 break;
             }
         }
 
         Ok(())
+    }
+
+    /// Called when entering a screen to trigger initial data loads.
+    fn on_screen_enter(&mut self) {
+        match self.active_screen {
+            ActiveScreen::Collections => {
+                let client = self.qdrant_client.clone();
+                self.collection_browser.on_enter(client);
+            }
+            ActiveScreen::Home => {}
+        }
+    }
+
+    /// Periodic tick to progress async operations.
+    fn tick(&mut self) {
+        match self.active_screen {
+            ActiveScreen::Collections => {
+                let client = self.qdrant_client.clone();
+                self.collection_browser.tick(client);
+            }
+            ActiveScreen::Home => {}
+        }
     }
 
     /// Render the current frame.
@@ -108,7 +163,10 @@ impl App {
         .split(area);
 
         self.render_title(frame, layout[0]);
-        self.render_body(frame, layout[1]);
+        match self.active_screen {
+            ActiveScreen::Home => self.render_body(frame, layout[1]),
+            ActiveScreen::Collections => self.collection_browser.render(frame, layout[1]),
+        }
         self.render_status_bar(frame, layout[2]);
     }
 
@@ -154,6 +212,10 @@ impl App {
             ]),
             Line::from(""),
             Line::from(Span::styled(
+                "Press 'c' to browse collections",
+                Style::default().fg(Color::Cyan),
+            )),
+            Line::from(Span::styled(
                 "Press 'q' or Esc to quit",
                 Style::default().fg(Color::DarkGray),
             )),
@@ -174,19 +236,32 @@ impl App {
 
     /// Render the status bar at the bottom.
     fn render_status_bar(&self, frame: &mut ratatui::Frame, area: Rect) {
-        let status = if let Some(ref err) = self.error_message {
+        let hints = match self.active_screen {
+            ActiveScreen::Home => " [Q]uit | [C]ollections ",
+            ActiveScreen::Collections => {
+                " [Q]uit | [↑/↓] Navigate | [Enter/R] Refresh detail | [Esc] Back "
+            }
+        };
+
+        let left = Span::styled(
+            hints,
+            Style::default().fg(Color::DarkGray).bg(Color::Reset),
+        );
+
+        let error = self.error_message.as_ref().map(|err| {
             Span::styled(
                 format!(" Error: {err} "),
                 Style::default().fg(Color::White).bg(Color::Red),
             )
+        });
+
+        let spans: Vec<Span> = if let Some(ref err_span) = error {
+            vec![left, err_span.clone()]
         } else {
-            Span::styled(
-                " [Q]uit ",
-                Style::default().fg(Color::DarkGray).bg(Color::Reset),
-            )
+            vec![left]
         };
 
-        let paragraph = Paragraph::new(Line::from(vec![status])).block(
+        let paragraph = Paragraph::new(Line::from(spans)).block(
             Block::default()
                 .borders(Borders::TOP)
                 .border_type(BorderType::Plain),
@@ -212,16 +287,46 @@ impl App {
         code: KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) -> bool {
+        // Global quit keys work on every screen
         match code {
             KeyCode::Char('q') | KeyCode::Char('Q') => {
                 self.should_quit = true;
+                return true;
+            }
+            KeyCode::Char('c') if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                self.should_quit = true;
+                return true;
+            }
+            _ => {}
+        }
+
+        match self.active_screen {
+            ActiveScreen::Home => self.handle_home_key(code),
+            ActiveScreen::Collections => {
+                let handled = self.collection_browser.handle_key(code);
+                if handled {
+                    return true;
+                }
+                // Esc on collections screen goes back to home
+                if code == KeyCode::Esc {
+                    self.active_screen = ActiveScreen::Home;
+                    self.on_screen_enter();
+                    return true;
+                }
+                false
+            }
+        }
+    }
+
+    /// Handle key presses on the home screen.
+    fn handle_home_key(&mut self, code: KeyCode) -> bool {
+        match code {
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                self.active_screen = ActiveScreen::Collections;
+                self.on_screen_enter();
                 true
             }
             KeyCode::Esc => {
-                self.should_quit = true;
-                true
-            }
-            KeyCode::Char('c') if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
                 self.should_quit = true;
                 true
             }
