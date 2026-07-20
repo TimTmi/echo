@@ -4,6 +4,7 @@
 //! about the currently selected collection.
 
 use crate::qdrant::QdrantClient;
+use crossterm::event::KeyCode;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -59,7 +60,7 @@ impl CollectionBrowserScreen {
     }
 
     /// Start refreshing the collection list.
-    fn refresh_collections(&mut self, client: QdrantClient) {
+    fn refresh_collections(&mut self, _client: QdrantClient) {
         self.list_load_state = LoadState::Loading;
         self.collection_names.clear();
         self.collection_details.clear();
@@ -128,7 +129,7 @@ impl CollectionBrowserScreen {
         }
     }
     /// Start loading detail for the currently selected collection.
-    fn load_detail(&mut self, client: QdrantClient) {
+    fn load_detail(&mut self, _client: QdrantClient) {
         let selected = self.list_state.selected().unwrap_or(0);
         if selected < self.collection_names.len() {
             let name = self.collection_names[selected].clone();
