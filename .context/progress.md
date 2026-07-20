@@ -9,11 +9,12 @@
 - **Basic TUI Loop**: Implemented ratatui shell with alternate screen, event polling with 250ms tick rate, quit via q, Esc, or Ctrl+C, title bar, status display with uptime, and status bar
 - **Embedding Client Module**: EmbeddingClient with generate_embedding(&str) -> Vec<f32> via llama.cpp /v1/embeddings HTTP endpoint. Includes unit tests with mockito mock HTTP server. mockito added as dev-dependency.
 - **Qdrant Client Module**: QdrantClient with `list_collections()` and `get_collection_info(name)` via Qdrant REST API. Uses reqwest, deserializes Qdrant's JSON response format (collections list + collection detail with vector config). 7 unit tests with mockito covering: empty list, multi-collection, HTTP errors, collection info with default/named vectors, 404, and null result.
+- **TUI Collection Browser**: Collection browser screen (`src/tui/collection_browser.rs`) with list + detail panels, Up/Down navigation, Enter/R refresh, Esc back, async loading on tick. Screen-based architecture (`ActiveScreen` enum) for future screens. QdrantClient wired into App state.
 
 ## In Progress
 - No active task
 
 ## Next Steps
-1. TUI screen: collection browser (list + detail panel)
+1. ~~TUI screen: collection browser (list + detail panel)~~ ✅ Done
 2. Search screen: input query text, generate embedding, search Qdrant, display results
 3. Point viewer: scroll through points in a collection with payload display
