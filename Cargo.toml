@@ -1,0 +1,31 @@
+[package]
+name = "echo"
+version = "0.1.0"
+edition = "2024"
+description = "A terminal UI application for interacting with Qdrant vector databases and BGE-M3 embeddings via llama.cpp"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# TUI
+ratatui = "0.29"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Qdrant client
+qdrant-client = "1"
+
+# Utilities
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

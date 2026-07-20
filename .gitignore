@@ -1,0 +1,13 @@
+# Rust build artifacts
+target/
+
+# IDE files
+.vscode/
+*.swp
+*.swo
+
+# Config file generated at runtime
+echo.toml
+
+# Environment files
+.env
