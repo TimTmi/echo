@@ -1,11 +1,18 @@
-use echo::config::Config;
+use echo::tui::App;
 
 fn main() -> anyhow::Result<()> {
-    let config = Config::load()?;
-    println!("Echo — vector terminal UI");
-    println!("Qdrant URL: {}", config.qdrant_url);
-    println!("Embedding URL: {}", config.embedding_url);
-    println!("Model: {}", config.embedding_model);
-    Ok(())
-}
+    // Initialize logging (trace level by default, overridable via RUST_LOG)
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "echo=info".into()),
+        )
+        .init();
 
+    // Load config (not yet used in the basic loop, will be wired in later tasks)
+    let _config = echo::config::Config::load()?;
+
+    // Run the TUI
+    let mut app = App::new();
+    app.run()
+}
