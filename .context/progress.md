@@ -5,12 +5,12 @@
 - **Infrastructure**: Qdrant and BGE-M3 embedding service running via Docker/llama.cpp at `D:\embedding\`
 - **Git Setup**: `git init`, branch renamed to `main`, remote configured (no commits yet)
 - **Context Initialized**: `.context/` folder created with project brief, design, data models, API spec, coding rules, roadmap, decisions
+- **Rust Project Scaffold**: `Cargo.toml` with core deps (ratatui, tokio, reqwest, serde, qdrant-client), module skeleton (`config/`, `qdrant/`, `embedding/`, `tui/`), config module with TOML load/save and defaults, `.gitignore`
 
 ## In Progress
-- No code written yet — project is at the planning stage
+- No active task
 
 ## Next Steps
-- Scaffold Rust project with `cargo init`
-- Set up core dependencies in `Cargo.toml` (ratatui, tokio, reqwest, serde, qdrant-client)
-- Implement config module
-- Implement basic TUI app loop
+1. Implement basic TUI app loop (ratatui shell with quit key)
+2. Implement Qdrant client module — list collections, view collection info
+3. Implement embedding client module — generate embeddings via llama.cpp
