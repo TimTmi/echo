@@ -19,10 +19,14 @@
   - Removed manual "? " selection prefix (List widget `highlight_style` handles it)
   - Added `Default` impl and collapsed nested `if` per clippy
 
+## Completed (continued)
+- **Search Screen**: Full search screen at `src/tui/search_screen.rs`. Text input with cursor, Enter triggers embedding gen + Qdrant search, results list with score/ID/payload preview. Wiring in `mod.rs`: `ActiveScreen::Search`, `EmbeddingClient` in App state, tick/key/render routing. Unused import and deprecation warnings fixed.
+- **Qdrant Search Endpoint**: `QdrantClient::search_points(collection, vector, limit)` → `POST /collections/{name}/points/search`. `SearchResult` struct with id, score, payload, vector fields.
+
 ## In Progress
 - No active task
 
 ## Next Steps
 1. ~~TUI screen: collection browser (list + detail panel)~~ ✅ Done
-2. Search screen: input query text, generate embedding, search Qdrant, display results
+2. ~~Search screen: input query text, generate embedding, search Qdrant, display results~~ ✅ Done
 3. Point viewer: scroll through points in a collection with payload display

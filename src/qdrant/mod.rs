@@ -137,9 +137,76 @@ impl QdrantClient {
     }
 }
 
+/// Search points in a collection by vector.
+///
+/// Calls `POST /collections/{name}/points/search`.
+///
+/// # Errors
+///
+/// Returns an error if the HTTP request fails or response is unparseable.
+impl QdrantClient {
+    pub async fn search_points(
+        &self,
+        collection: &str,
+        vector: &[f32],
+        limit: usize,
+    ) -> anyhow::Result<Vec<SearchResult>> {
+        let url = format!(
+            "{}/collections/{collection}/points/search",
+            self.base_url
+        );
+        let body = serde_json::json!({
+            "vector": vector,
+            "limit": limit,
+            "with_payload": true,
+            "with_vector": false,
+        });
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .context("failed to send search request")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("search failed with status {status}: {body}");
+        }
+
+        let search_response: SearchResponse = response
+            .json()
+            .await
+            .context("failed to parse search response")?;
+
+        Ok(search_response.result.unwrap_or_default())
+    }
+}
+
+/// A single matched point from a Qdrant search result.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SearchResult {
+    pub id: serde_json::Value,
+    pub version: Option<u64>,
+    pub score: Option<f64>,
+    pub payload: Option<serde_json::Map<String, serde_json::Value>>,
+    pub vector: Option<Vec<f64>>,
+}
+
 // ---------------------------------------------------------------------------
 // Internal response types — mirroring the Qdrant REST API JSON structure
 // ---------------------------------------------------------------------------
+
+/// Response for a search request.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct SearchResponse {
+    result: Option<Vec<SearchResult>>,
+    status: Option<String>,
+    time: Option<f64>,
+}
 
 /// Response for `GET /collections`.
 #[derive(Debug, Deserialize)]

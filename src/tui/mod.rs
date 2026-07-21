@@ -4,10 +4,13 @@
 //! Provides the main application loop, event handling, and screen rendering.
 
 pub mod collection_browser;
+pub mod search_screen;
 
+use crate::embedding::EmbeddingClient;
 use crate::qdrant::QdrantClient;
 use anyhow::Context;
 use collection_browser::CollectionBrowserScreen;
+use search_screen::SearchScreen;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -28,6 +31,7 @@ enum ActiveScreen {
     #[default]
     Home,
     Collections,
+    Search,
 }
 
 /// Application state for the TUI.
@@ -42,8 +46,12 @@ pub struct App {
     active_screen: ActiveScreen,
     /// Qdrant client for API calls.
     qdrant_client: QdrantClient,
+    /// Embedding client for generating vectors.
+    embedding_client: EmbeddingClient,
     /// Collection browser screen state.
     collection_browser: CollectionBrowserScreen,
+    /// Search screen state.
+    search_screen: SearchScreen,
     /// Handle to the Tokio runtime for async operations.
     runtime_handle: Option<Handle>,
 }
@@ -56,7 +64,9 @@ impl Default for App {
             error_message: None,
             active_screen: ActiveScreen::default(),
             qdrant_client: QdrantClient::new("http://localhost:6333"),
+            embedding_client: EmbeddingClient::new("http://localhost:8080/v1/embeddings"),
             collection_browser: CollectionBrowserScreen::new(),
+            search_screen: SearchScreen::new(),
             runtime_handle: None,
         }
     }
@@ -144,6 +154,9 @@ impl App {
             ActiveScreen::Collections => {
                 self.collection_browser.on_enter();
             }
+            ActiveScreen::Search => {
+                self.search_screen.on_enter();
+            }
             ActiveScreen::Home => {}
         }
     }
@@ -154,6 +167,12 @@ impl App {
             ActiveScreen::Collections => {
                 if let Some(handle) = &self.runtime_handle {
                     self.collection_browser.tick(&self.qdrant_client, handle);
+                }
+            }
+            ActiveScreen::Search => {
+                if let Some(handle) = &self.runtime_handle {
+                    self.search_screen
+                        .tick(&self.qdrant_client, &self.embedding_client, handle);
                 }
             }
             ActiveScreen::Home => {}
@@ -173,6 +192,7 @@ impl App {
         match self.active_screen {
             ActiveScreen::Home => self.render_body(frame, layout[1]),
             ActiveScreen::Collections => self.collection_browser.render(frame, layout[1]),
+            ActiveScreen::Search => self.search_screen.render(frame, layout[1]),
         }
         self.render_status_bar(frame, layout[2]);
     }
@@ -244,9 +264,12 @@ impl App {
     /// Render the status bar at the bottom.
     fn render_status_bar(&self, frame: &mut ratatui::Frame, area: Rect) {
         let hints = match self.active_screen {
-            ActiveScreen::Home => " [Q]uit | [C]ollections ",
+            ActiveScreen::Home => " [Q]uit | [C]ollections | [S]earch ",
             ActiveScreen::Collections => {
                 " [Q]uit | [↑/↓] Navigate | [Enter/R] Refresh detail | [Esc] Back "
+            }
+            ActiveScreen::Search => {
+                " [Q]uit | Type query + Enter to search | [Esc] Back "
             }
         };
 
@@ -319,6 +342,19 @@ impl App {
                 }
                 false
             }
+            ActiveScreen::Search => {
+                let handled = self.search_screen.handle_key(code);
+                if handled {
+                    return true;
+                }
+                // Esc on search screen goes back to home
+                if code == KeyCode::Esc {
+                    self.active_screen = ActiveScreen::Home;
+                    self.on_screen_enter();
+                    return true;
+                }
+                false
+            }
         }
     }
 
@@ -327,6 +363,11 @@ impl App {
         match code {
             KeyCode::Char('c') | KeyCode::Char('C') => {
                 self.active_screen = ActiveScreen::Collections;
+                self.on_screen_enter();
+                true
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                self.active_screen = ActiveScreen::Search;
                 self.on_screen_enter();
                 true
             }
