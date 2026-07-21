@@ -39,6 +39,12 @@ pub struct CollectionBrowserScreen {
     detail_error: Option<String>,
 }
 
+impl Default for CollectionBrowserScreen {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CollectionBrowserScreen {
     /// Create a new collection browser screen.
     pub fn new() -> Self {
@@ -53,14 +59,14 @@ impl CollectionBrowserScreen {
     }
 
     /// Called when entering this screen. Triggers a refresh of the collection list.
-    pub fn on_enter(&mut self, client: QdrantClient) {
+    pub fn on_enter(&mut self) {
         if self.list_load_state == LoadState::Idle || self.list_load_state == LoadState::Loaded {
-            self.refresh_collections(client);
+            self.refresh_collections();
         }
     }
 
     /// Start refreshing the collection list.
-    fn refresh_collections(&mut self, _client: QdrantClient) {
+    fn refresh_collections(&mut self) {
         self.list_load_state = LoadState::Loading;
         self.collection_names.clear();
         self.collection_details.clear();
@@ -71,16 +77,14 @@ impl CollectionBrowserScreen {
 
     /// Periodic tick. Progresses async loading by running the async call
     /// on the current tokio runtime via block_on.
-    pub fn tick(&mut self, client: QdrantClient) {
+    pub fn tick(&mut self, client: &QdrantClient) {
         match self.list_load_state {
             LoadState::Idle => {
                 self.list_load_state = LoadState::Loading;
             }
             LoadState::Loading => {
                 let rt = tokio::runtime::Handle::current();
-                let result = std::thread::scope(|_| {
-                    rt.block_on(async { client.list_collections().await })
-                });
+                let result = rt.block_on(client.list_collections());
 
                 match result {
                     Ok(names) => {
@@ -88,7 +92,7 @@ impl CollectionBrowserScreen {
                         self.list_load_state = LoadState::Loaded;
                         if !self.collection_names.is_empty() {
                             self.list_state.select(Some(0));
-                            self.load_detail(client);
+                            self.load_detail();
                         } else {
                             self.list_state.select(None);
                         }
@@ -103,10 +107,7 @@ impl CollectionBrowserScreen {
                 if let Some(ref name) = self.loading_detail.clone() {
                     if !self.collection_details.contains_key(name) {
                         let rt = tokio::runtime::Handle::current();
-                        let name_clone = name.clone();
-                        let result = std::thread::scope(|_| {
-                            rt.block_on(async { client.get_collection_info(&name_clone).await })
-                        });
+                        let result = rt.block_on(client.get_collection_info(name));
 
                         match result {
                             Ok(info) => {
@@ -115,9 +116,8 @@ impl CollectionBrowserScreen {
                                 self.detail_error = None;
                             }
                             Err(e) => {
-                                self.detail_error = Some(format!(
-                                    "Failed to load detail for '{name}': {e:#}"
-                                ));
+                                self.detail_error =
+                                    Some(format!("Failed to load detail for '{name}': {e:#}"));
                                 self.loading_detail = None;
                             }
                         }
@@ -129,7 +129,7 @@ impl CollectionBrowserScreen {
         }
     }
     /// Start loading detail for the currently selected collection.
-    fn load_detail(&mut self, _client: QdrantClient) {
+    fn load_detail(&mut self) {
         let selected = self.list_state.selected().unwrap_or(0);
         if selected < self.collection_names.len() {
             let name = self.collection_names[selected].clone();
@@ -143,9 +143,15 @@ impl CollectionBrowserScreen {
     pub fn handle_key(&mut self, code: crossterm::event::KeyCode) -> bool {
         match code {
             KeyCode::Up => {
-                if self.collection_names.is_empty() { return true; }
+                if self.collection_names.is_empty() {
+                    return true;
+                }
                 let i = self.list_state.selected().unwrap_or(0);
-                let new_i = if i == 0 { self.collection_names.len() - 1 } else { i - 1 };
+                let new_i = if i == 0 {
+                    self.collection_names.len() - 1
+                } else {
+                    i - 1
+                };
                 self.list_state.select(Some(new_i));
                 self.detail_error = None;
                 let sel_name = &self.collection_names[new_i];
@@ -155,7 +161,9 @@ impl CollectionBrowserScreen {
                 true
             }
             KeyCode::Down => {
-                if self.collection_names.is_empty() { return true; }
+                if self.collection_names.is_empty() {
+                    return true;
+                }
                 let i = self.list_state.selected().unwrap_or(0);
                 let new_i = (i + 1) % self.collection_names.len();
                 self.list_state.select(Some(new_i));
@@ -168,12 +176,12 @@ impl CollectionBrowserScreen {
             }
             KeyCode::Enter | KeyCode::Char('r') | KeyCode::Char('R') => {
                 let selected = self.list_state.selected();
-                if let Some(idx) = selected {
-                    if idx < self.collection_names.len() {
-                        let name = &self.collection_names[idx];
-                        self.collection_details.remove(name);
-                        self.loading_detail = Some(name.clone());
-                    }
+                if let Some(idx) = selected
+                    && idx < self.collection_names.len()
+                {
+                    let name = &self.collection_names[idx];
+                    self.collection_details.remove(name);
+                    self.loading_detail = Some(name.clone());
                 }
                 true
             }
@@ -182,16 +190,14 @@ impl CollectionBrowserScreen {
     }
 
     /// Render the collection browser screen.
-    pub fn render(&self, frame: &mut ratatui::Frame, area: Rect) {
-        let split = Layout::horizontal([
-            Constraint::Ratio(1, 3),
-            Constraint::Ratio(2, 3),
-        ]).split(area);
+    pub fn render(&mut self, frame: &mut ratatui::Frame, area: Rect) {
+        let split =
+            Layout::horizontal([Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)]).split(area);
         self.render_collection_list(frame, split[0]);
         self.render_collection_detail(frame, split[1]);
     }
 
-    fn render_collection_list(&self, frame: &mut ratatui::Frame, area: Rect) {
+    fn render_collection_list(&mut self, frame: &mut ratatui::Frame, area: Rect) {
         let items: Vec<ListItem> = match self.list_load_state {
             LoadState::Loading => {
                 vec![ListItem::new(Line::from(Span::styled(
@@ -212,17 +218,15 @@ impl CollectionBrowserScreen {
                         Style::default().fg(Color::DarkGray),
                     )))]
                 } else {
-                    self.collection_names.iter().map(|name| {
-                        let is_highlighted = self
-                            .list_state
-                            .selected()
-                            .map_or(false, |i| i < self.collection_names.len() && self.collection_names[i] == *name);
-                        let prefix = if is_highlighted { "? " } else { "  " };
-                        ListItem::new(Line::from(Span::styled(
-                            format!("{prefix}{name}"),
-                            Style::default().fg(if is_highlighted { Color::Cyan } else { Color::White }),
-                        )))
-                    }).collect()
+                    self.collection_names
+                        .iter()
+                        .map(|name| {
+                            ListItem::new(Line::from(Span::styled(
+                                format!("  {name}"),
+                                Style::default().fg(Color::White),
+                            )))
+                        })
+                        .collect()
                 }
             }
         };
@@ -240,7 +244,7 @@ impl CollectionBrowserScreen {
                     .add_modifier(Modifier::BOLD),
             )
             .direction(ListDirection::TopToBottom);
-        frame.render_stateful_widget(list, area, &mut self.list_state.clone());
+        frame.render_stateful_widget(list, area, &mut self.list_state);
     }
 
     fn render_collection_detail(&self, frame: &mut ratatui::Frame, area: Rect) {
@@ -260,21 +264,31 @@ impl CollectionBrowserScreen {
                 vec![
                     Line::from(Span::styled(
                         format!(" Collection: {name} "),
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
                     )),
                     Line::from(""),
-                    Line::from(Span::styled(" Loading detail... ", Style::default().fg(Color::Yellow))),
+                    Line::from(Span::styled(
+                        " Loading detail... ",
+                        Style::default().fg(Color::Yellow),
+                    )),
                 ]
             } else if let Some(info) = self.collection_details.get(name.as_str()) {
                 vec![
                     Line::from(Span::styled(
                         format!(" {name} "),
-                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
                     )),
                     Line::from(""),
                     Line::from(vec![
                         Span::styled("Vector Size: ", Style::default().fg(Color::Cyan)),
-                        Span::styled(format!("{}", info.vector_size), Style::default().fg(Color::White)),
+                        Span::styled(
+                            format!("{}", info.vector_size),
+                            Style::default().fg(Color::White),
+                        ),
                     ]),
                     Line::from(vec![
                         Span::styled("Distance:    ", Style::default().fg(Color::Cyan)),
@@ -282,17 +296,25 @@ impl CollectionBrowserScreen {
                     ]),
                     Line::from(vec![
                         Span::styled("Points:      ", Style::default().fg(Color::Cyan)),
-                        Span::styled(format!("{}", info.points_count), Style::default().fg(Color::White)),
+                        Span::styled(
+                            format!("{}", info.points_count),
+                            Style::default().fg(Color::White),
+                        ),
                     ]),
                 ]
             } else {
                 vec![
                     Line::from(Span::styled(
                         format!(" Collection: {name} "),
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
                     )),
                     Line::from(""),
-                    Line::from(Span::styled(" Queued for loading... ", Style::default().fg(Color::DarkGray))),
+                    Line::from(Span::styled(
+                        " Queued for loading... ",
+                        Style::default().fg(Color::DarkGray),
+                    )),
                 ]
             }
         } else {
@@ -313,6 +335,3 @@ impl CollectionBrowserScreen {
         frame.render_widget(paragraph, area);
     }
 }
-
-
-

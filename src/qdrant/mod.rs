@@ -254,7 +254,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_collections_http_error() {
-        let (server, mock) = setup_mock("GET", "/collections", 503, "Service Unavailable".into()).await;
+        let (server, mock) =
+            setup_mock("GET", "/collections", 503, "Service Unavailable".into()).await;
         let client = QdrantClient::new(server.url());
 
         let result = client.list_collections().await;
@@ -349,7 +350,8 @@ mod tests {
         })
         .to_string();
 
-        let (server, mock) = setup_mock("GET", "/collections/nonexistent", 404, response_body).await;
+        let (server, mock) =
+            setup_mock("GET", "/collections/nonexistent", 404, response_body).await;
         let client = QdrantClient::new(server.url());
 
         let result = client.get_collection_info("nonexistent").await;

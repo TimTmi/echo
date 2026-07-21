@@ -135,8 +135,7 @@ impl App {
     fn on_screen_enter(&mut self) {
         match self.active_screen {
             ActiveScreen::Collections => {
-                let client = self.qdrant_client.clone();
-                self.collection_browser.on_enter(client);
+                self.collection_browser.on_enter();
             }
             ActiveScreen::Home => {}
         }
@@ -146,15 +145,14 @@ impl App {
     fn tick(&mut self) {
         match self.active_screen {
             ActiveScreen::Collections => {
-                let client = self.qdrant_client.clone();
-                self.collection_browser.tick(client);
+                self.collection_browser.tick(&self.qdrant_client);
             }
             ActiveScreen::Home => {}
         }
     }
 
     /// Render the current frame.
-    fn render(&self, area: Rect, frame: &mut ratatui::Frame) {
+    fn render(&mut self, area: Rect, frame: &mut ratatui::Frame) {
         let layout = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(1),
@@ -243,10 +241,7 @@ impl App {
             }
         };
 
-        let left = Span::styled(
-            hints,
-            Style::default().fg(Color::DarkGray).bg(Color::Reset),
-        );
+        let left = Span::styled(hints, Style::default().fg(Color::DarkGray).bg(Color::Reset));
 
         let error = self.error_message.as_ref().map(|err| {
             Span::styled(
