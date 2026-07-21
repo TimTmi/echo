@@ -20,6 +20,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use std::io::stdout;
 use std::time::{Duration, Instant};
+use tokio::runtime::Handle;
 
 /// Represents the active screen in the application.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -43,6 +44,8 @@ pub struct App {
     qdrant_client: QdrantClient,
     /// Collection browser screen state.
     collection_browser: CollectionBrowserScreen,
+    /// Handle to the Tokio runtime for async operations.
+    runtime_handle: Option<Handle>,
 }
 
 impl Default for App {
@@ -54,6 +57,7 @@ impl Default for App {
             active_screen: ActiveScreen::default(),
             qdrant_client: QdrantClient::new("http://localhost:6333"),
             collection_browser: CollectionBrowserScreen::new(),
+            runtime_handle: None,
         }
     }
 }
@@ -73,6 +77,9 @@ impl App {
     /// Run the main TUI event loop. This function takes full control of the terminal,
     /// enters alternate screen, and blocks until the user quits.
     pub fn run(&mut self) -> anyhow::Result<()> {
+        let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+        self.runtime_handle = Some(rt.handle().clone());
+
         // Enter raw mode and alternate screen
         enable_raw_mode().context("failed to enable raw mode")?;
         let mut stdout = stdout();
@@ -82,7 +89,7 @@ impl App {
         let terminal = Terminal::new(ratatui::prelude::CrosstermBackend::new(stdout))
             .context("failed to create terminal")?;
 
-        // Run the event loop
+        // Run the event loop — uses rt.handle() via runtime_handle
         let result = self.event_loop(terminal);
 
         // Restore terminal — even if event loop errored
@@ -145,7 +152,9 @@ impl App {
     fn tick(&mut self) {
         match self.active_screen {
             ActiveScreen::Collections => {
-                self.collection_browser.tick(&self.qdrant_client);
+                if let Some(handle) = &self.runtime_handle {
+                    self.collection_browser.tick(&self.qdrant_client, handle);
+                }
             }
             ActiveScreen::Home => {}
         }

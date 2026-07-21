@@ -5,6 +5,7 @@
 
 use crate::qdrant::QdrantClient;
 use crossterm::event::KeyCode;
+use tokio::runtime::Handle;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -76,15 +77,14 @@ impl CollectionBrowserScreen {
     }
 
     /// Periodic tick. Progresses async loading by running the async call
-    /// on the current tokio runtime via block_on.
-    pub fn tick(&mut self, client: &QdrantClient) {
+    /// on the provided tokio runtime handle via block_on.
+    pub fn tick(&mut self, client: &QdrantClient, handle: &Handle) {
         match self.list_load_state {
             LoadState::Idle => {
                 self.list_load_state = LoadState::Loading;
             }
             LoadState::Loading => {
-                let rt = tokio::runtime::Handle::current();
-                let result = rt.block_on(client.list_collections());
+                let result = handle.block_on(client.list_collections());
 
                 match result {
                     Ok(names) => {
@@ -106,8 +106,7 @@ impl CollectionBrowserScreen {
             LoadState::Loaded | LoadState::Error(_) => {
                 if let Some(ref name) = self.loading_detail.clone() {
                     if !self.collection_details.contains_key(name) {
-                        let rt = tokio::runtime::Handle::current();
-                        let result = rt.block_on(client.get_collection_info(name));
+                        let result = handle.block_on(client.get_collection_info(name));
 
                         match result {
                             Ok(info) => {
