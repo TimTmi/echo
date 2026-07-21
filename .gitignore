@@ -3,6 +3,7 @@ target/
 
 # IDE files
 .vscode/
+.cline/
 *.swp
 *.swo
 
