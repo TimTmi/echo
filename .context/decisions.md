@@ -52,3 +52,14 @@
   - Vector-shape drift: if any collection uses non-BGE-M3 config (different size or distance), fanout returns errors for those and silently misses results. Mitigation: at fanout time, fetch each collection's info first and skip those whose vector config doesn't match `BGE-M3` shape, surface a warning.
   - Score semantics: cosine scores from different collections are still numerically comparable (same distance), but ordering with payload-filtered collections is not. Mitigation: warn in flash if any collection in the fanout uses a non-Cosine distance.
   - Latency: N round-trips. Mitigation later (out of scope here): parallel fanout via `tokio::join!`.
+
+### 2026-07-23: Collection CRUD lives inline in the Collections screen, not in a new `ActiveScreen`
+- **Decision**: Implement Create and Delete for collections as additional `Mode` variants on `CollectionBrowserScreen` rather than introducing a second screen (e.g. `ActiveScreen::CollectionManage`).
+- **Reason**: The Collections screen's responsibility is "manage collections" (browse them, view detail, mutate them). Mounting a separate modal screen for each write operation would split one responsibility across two screens and create an awkward entry/exit dance. An inline form rendered into the existing detail panel keeps the screen count down and the user's mental model simple: "I am on Collections; I pressed [N]; I see a name field." The form overlays the browsing content via state, not via a separate screen. Both `[N]` (create) and `[D]` (confirm delete) operate on the same selection the user is already on, so the context loss of a screen transition would be a real downside.
+- **Consequences**:
+  - `CollectionBrowserScreen` gains a `Mode` enum with five variants. The handle key path now branches on `Mode` rather than collapsing keys into one match.
+  - Pending states (`PendingCreate(name)` / `PendingDelete(name)`) swallow every keypress so the user cannot fire a second mutation before the first lands.
+  - The state-machine methods (`begin_create`, `begin_delete`, `complete_create_success`, `complete_delete_success`, `complete_op_error`) are unit-testable without driving `tick()` end-to-end. The HTTP round-trip itself remains in `qdrant::tests`.
+  - On error, we surface the failure as a flash banner and return to `Browsing` without forcing a list reload -- Qdrant state is unchanged, so showing cached state is the right thing.
+  - The form has a `Pending<X>` waiting state with no visible feedback during the HTTP call. Acceptable because the typical call is sub-100 ms locally; if that ever changes, render "Working..." lines inside the detail panel -- the placeholder already exists for this.
+  - "Vector config" remains hidden from users. Collections are always created with BGE-M3's (1024, Cosine) shape. This matches `data_models.md` and avoids dragging in vector-config UI for a use case we do not support.

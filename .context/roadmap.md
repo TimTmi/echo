@@ -13,7 +13,7 @@
 - [x] Point viewer: scroll through points in a collection with payload display
 
 ## Phase 3: Enhanced Interaction
-- [ ] Create / delete collections from the TUI
+- [x] Create / delete collections from the TUI
 - [ ] Upsert points (paste or load from file)
 - [ ] Delete points by filter or ID
 - [x] Configuration screen (edit Qdrant URL, embedding URL from TUI)
