@@ -39,3 +39,16 @@
 - **Decision**: Screens whose transitions depend on external state must obtain that state explicitly before being entered. Means: enter-Search must pull a collection name from something (selected list, default config, or user prompt) and refuse to run with an empty target. Same pattern applies to any future endpoint that names a resource.
 - **Reason**: `SearchScreen.collection` was never wired by either path that entered it (Home `s`, Collections `S`). Effect: `/points/search` URL became `/collections//points/search` → opaque 404 that masked the actual problem (empty string in URL). A guard in the screen plus an explicit setter on entry keeps the contract local and testable.
 - **Consequences**: Each new screen needs an explicit setter for its preconditions, plus a test pair (with-precondition passes through; without-precondition shows clean error).
+
+### 2026-07-23: Cross-collection search (proposal, not yet implemented)
+- **Status**: ADR pending. Awaiting user's choice between alternatives below.
+- **Problem**: `SearchScreen.collection` is empty when the user has `default_collection = None` and hasn't first drilled into Collections. Today this hard-errors with "no collection selected." But Qdrant has no native cross-collection query endpoint; the natural fix is client-side fanout (one `search_points` per collection, merged by score). Auto-running that fanout when no collection is selected removes the dead-end UX for users who don't configure a default.
+- **Alternatives under consideration**:
+  - **A. Auto-fallback in `SearchScreen` (recommended)**: when `collection.is_empty()`, fan out to all collections in `CollectionBrowserScreen.collection_names`. Each result row carries its source collection name. Bare-bones, sequential HTTP. Tightest UX, smallest diff. Trade-off: latency grows linearly with collection count; score-comparison across collections is only meaningful if all collections share the same vector config (currently true: 1024-D Cosine for BGE-M3).
+  - **B. New `ActiveScreen::CrossSearch` variant**: parallel screen with explicit cross-collection input. Cleaner separation, but doubles screen surface area for a feature that's mostly indistinguishable from Search to the user.
+  - **C. Explicit toggle on `SearchScreen` (e.g. `[Tab]` mode)**: user opts in to cross-search, separate from single-search. Less implicit, more discoverable, but adds a keybinding to remember.
+- **Recommended**: A. Source-label rendering is the only must-have change beyond the fanout call. Avoid B unless a future workflow really needs cross-search framed as a distinct mode.
+- **Risks** (for any alternative):
+  - Vector-shape drift: if any collection uses non-BGE-M3 config (different size or distance), fanout returns errors for those and silently misses results. Mitigation: at fanout time, fetch each collection's info first and skip those whose vector config doesn't match `BGE-M3` shape, surface a warning.
+  - Score semantics: cosine scores from different collections are still numerically comparable (same distance), but ordering with payload-filtered collections is not. Mitigation: warn in flash if any collection in the fanout uses a non-Cosine distance.
+  - Latency: N round-trips. Mitigation later (out of scope here): parallel fanout via `tokio::join!`.

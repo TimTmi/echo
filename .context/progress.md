@@ -31,7 +31,7 @@
 - **Config input bug fix (2026-07-23)**: typing `q` or `Ctrl+C` while editing a config field used to quit the app because the global quit handler ran before per-screen dispatch. `App::handle_key_press` now skips the `q`/`Ctrl+C` block when the active screen has `is_text_editing()` true. Generalized to `SearchScreen` (query input is always focused). 7 new tests (4 original Config + 3 Search regression).
 
 ## In Progress
-- No active task
+- **Cross-collection search (designing)**: drafting the conditional fallback inside `SearchScreen` (empty `collection` → fan out to all loaded collections, source-label each result). ADR pending in `decisions.md` — awaiting user choice between auto-fallback, dedicated screen, or explicit toggle. No code changes yet.
 
 ## Next Steps
 - (Phase 3) Create / delete collections from the TUI
