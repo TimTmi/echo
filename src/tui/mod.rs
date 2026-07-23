@@ -374,17 +374,26 @@ impl App {
         code: KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) -> bool {
-        // Global quit keys work on every screen
-        match code {
-            KeyCode::Char('q') | KeyCode::Char('Q') => {
-                self.should_quit = true;
-                return true;
+        // Global quit keys fire on every screen except when the active screen
+        // is currently consuming text input (e.g. editing a config field) ---
+        // otherwise typing 'q' inside the config editor would exit the app.
+        let suppress_global_quit =
+            matches!(self.active_screen, ActiveScreen::Config) && self.config_screen.is_editing();
+
+        if !suppress_global_quit {
+            match code {
+                KeyCode::Char('q') | KeyCode::Char('Q') => {
+                    self.should_quit = true;
+                    return true;
+                }
+                KeyCode::Char('c')
+                    if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) =>
+                {
+                    self.should_quit = true;
+                    return true;
+                }
+                _ => {}
             }
-            KeyCode::Char('c') if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                self.should_quit = true;
-                return true;
-            }
-            _ => {}
         }
 
         match self.active_screen {
@@ -478,5 +487,50 @@ impl App {
             }
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+
+    fn app_in_config_screen() -> App {
+        let mut app = App::new();
+        app.active_screen = ActiveScreen::Config;
+        app
+    }
+
+    /// When the config screen is editing a field, global quit keys must NOT
+    /// exit the app -- they should be left to the screen as text input.
+    #[test]
+    fn q_while_editing_does_not_quit_app() {
+        let mut app = app_in_config_screen();
+        app.handle_key_press(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(app.config_screen.is_editing());
+
+        assert!(app.handle_key_press(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(!app.should_quit, "'q' typed during edit must not quit");
+        assert!(app.config_screen.is_editing());
+    }
+
+    #[test]
+    fn ctrl_c_while_editing_does_not_quit_app() {
+        let mut app = app_in_config_screen();
+        app.handle_key_press(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(app.config_screen.is_editing());
+
+        assert!(app.handle_key_press(KeyCode::Char('c'), KeyModifiers::CONTROL,));
+        assert!(!app.should_quit, "Ctrl+C during edit must not quit");
+        assert!(app.config_screen.is_editing());
+    }
+
+    /// Regression: outside of edit mode the global quit keys still work.
+    #[test]
+    fn q_when_not_editing_still_quits_app() {
+        let mut app = app_in_config_screen();
+        // No Enter pressed -> config screen not editing.
+        assert!(app.handle_key_press(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(app.should_quit);
     }
 }

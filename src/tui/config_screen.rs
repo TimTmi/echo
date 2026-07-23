@@ -87,6 +87,12 @@ impl ConfigScreen {
         self.dirty
     }
 
+    /// Whether a field is currently being edited. Used by `App` to decide
+    /// whether global quit keys (`q`, `Ctrl+C`) should fire.
+    pub fn is_editing(&self) -> bool {
+        self.editing
+    }
+
     pub fn current_config(&self) -> &Config {
         &self.config
     }
@@ -508,5 +514,16 @@ mod tests {
     fn unrecognized_keys_are_ignored() {
         let mut s = make();
         assert_eq!(s.handle_key(KeyCode::F(1)), ConfigKeyOutcome::Ignore);
+    }
+
+    #[test]
+    fn q_char_inside_edit_is_consumed_as_input() {
+        let mut s = make();
+        s.handle_key(KeyCode::Enter);
+        s.edit_cursor = 0;
+        assert_eq!(s.handle_key(KeyCode::Char('q')), ConfigKeyOutcome::Handled);
+        // 'q' was inserted at the start of the buffer.
+        assert!(s.edit_buffer.starts_with('q'));
+        assert!(s.editing);
     }
 }
