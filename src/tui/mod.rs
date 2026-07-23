@@ -305,7 +305,7 @@ impl App {
         let layout = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(1),
-            Constraint::Length(1),
+            Constraint::Length(3),
         ])
         .split(area);
 
@@ -423,11 +423,15 @@ impl App {
             vec![left]
         };
 
-        let paragraph = Paragraph::new(Line::from(spans)).block(
+        let paragraph = Paragraph::new(Line::from(spans))
+            .alignment(Alignment::Left)
+            .block(
             Block::default()
-                .borders(Borders::TOP)
-                .border_type(BorderType::Plain),
-        );
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title(" Keys ")
+                .title_alignment(Alignment::Left),
+            );
 
         frame.render_widget(paragraph, area);
     }
