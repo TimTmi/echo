@@ -42,6 +42,18 @@ Base URL: `http://qdrant.localhost:80` or `http://localhost:6333`
 }
 ```
 
+### Scroll Payload
+```json
+{
+  "limit": 20,
+  "offset": null,
+  "with_payload": true,
+  "with_vector": false
+}
+```
+
+`offset` is the cursor returned by the previous response (`next_page_offset`). Omit or use `null` for the first page. When `next_page_offset` is `null` or absent, there are no more pages.
+
 ---
 
 ## llama.cpp Embedding API

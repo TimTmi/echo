@@ -10,7 +10,7 @@
 - [x] TUI screen: collection browser (list + detail panel)
 - [x] Embedding client module — generate embeddings via llama.cpp
 - [x] Search screen: input query text, generate embedding, search Qdrant, display results
-- [ ] Point viewer: scroll through points in a collection with payload display
+- [x] Point viewer: scroll through points in a collection with payload display
 
 ## Phase 3: Enhanced Interaction
 - [ ] Create / delete collections from the TUI
