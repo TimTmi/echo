@@ -14,17 +14,10 @@ use crate::qdrant::{EnsureOutcome, QdrantClient, RenameOutcome};
 
 /// Translate a [`RenameOutcome`] into a user-facing one-liner for the flash
 /// banner after a save on the config screen.
-fn rename_outcome_message(
-    old: Option<&str>,
-    new: Option<&str>,
-    outcome: RenameOutcome,
-) -> String {
+fn rename_outcome_message(old: Option<&str>, new: Option<&str>, outcome: RenameOutcome) -> String {
     match outcome {
         RenameOutcome::Unchanged => "Default collection unchanged.".to_string(),
-        RenameOutcome::Created => format!(
-            "Created default collection '{}'.",
-            new.unwrap_or("?")
-        ),
+        RenameOutcome::Created => format!("Created default collection '{}'.", new.unwrap_or("?")),
         RenameOutcome::Renamed => format!(
             "Renamed default collection: '{}' -> '{}'.",
             old.unwrap_or("?"),
@@ -198,7 +191,11 @@ impl App {
         if self.config_screen.is_dirty() {
             return;
         }
-        let current = self.config_screen.current_config().default_collection.clone();
+        let current = self
+            .config_screen
+            .current_config()
+            .default_collection
+            .clone();
         if current == self.prev_persisted_default {
             return;
         }
@@ -209,10 +206,8 @@ impl App {
             return;
         };
         let client = self.qdrant_client.clone();
-        let result = handle.block_on(client.rename_default_collection(
-            old.as_deref(),
-            current.as_deref(),
-        ));
+        let result =
+            handle.block_on(client.rename_default_collection(old.as_deref(), current.as_deref()));
         let msg = match result {
             Ok(outcome) => rename_outcome_message(old.as_deref(), current.as_deref(), outcome),
             Err(e) => format!("Default-collection rename failed: {e:#}"),
@@ -402,7 +397,7 @@ impl App {
         let hints = match self.active_screen {
             ActiveScreen::Home => " [Q]uit | [C]ollections | [S]earch | [G]onfig ",
             ActiveScreen::Collections => {
-                " [Q]uit | [↑/↓] Navigate | [Enter/R] Refresh detail | [Esc] Back "
+                " [Q]uit | [↑/↓] Navigate | [Enter/R] Refresh │ [N] New │ [D] Delete │ [P]oints │ [S]earch │ [Esc] Back "
             }
             ActiveScreen::Search => " [Q]uit | Type query + Enter to search | [Esc] Back ",
             ActiveScreen::PointViewer => {
@@ -460,6 +455,7 @@ impl App {
         let suppress_global_quit = match self.active_screen {
             ActiveScreen::Config => self.config_screen.is_text_editing(),
             ActiveScreen::Search => self.search_screen.is_text_editing(),
+            ActiveScreen::Collections => self.collection_browser.is_text_editing(),
             _ => false,
         };
 
@@ -721,11 +717,66 @@ mod tests {
             rename_outcome_message(Some("general"), Some("general"), Unchanged),
             "Default collection unchanged."
         );
-        assert!(rename_outcome_message(None, Some("docs"), Created)
-            .contains("Created default collection 'docs'"));
-        assert!(rename_outcome_message(Some("general"), Some("docs"), Renamed)
-            .contains("Renamed default collection: 'general' -> 'docs'"));
-        assert!(rename_outcome_message(Some("general"), Some("docs"), CollisionKept)
-            .contains("already exists"));
+        assert!(
+            rename_outcome_message(None, Some("docs"), Created)
+                .contains("Created default collection 'docs'")
+        );
+        assert!(
+            rename_outcome_message(Some("general"), Some("docs"), Renamed)
+                .contains("Renamed default collection: 'general' -> 'docs'")
+        );
+        assert!(
+            rename_outcome_message(Some("general"), Some("docs"), CollisionKept)
+                .contains("already exists")
+        );
+    }
+
+    // -- Collection browser CRUD wiring ----------------------------------
+    // The `n` and `d` shortcuts on the Collections screen route through the
+    // screen's own `handle_key`; these tests assert the App-level dispatch.
+
+    #[test]
+    fn n_from_collections_opens_create_form() {
+        let mut app = App::new();
+        app.active_screen = ActiveScreen::Collections;
+        // The create form requires no selection, so this works on an empty list.
+        assert!(app.handle_key_press(KeyCode::Char('n'), KeyModifiers::NONE));
+        assert!(matches!(
+            app.collection_browser.mode(),
+            crate::tui::collection_browser::Mode::Creating { .. }
+        ));
+    }
+
+    #[test]
+    fn d_from_collections_with_selection_opens_confirm() {
+        // Seed the browser with a collection so 'd' has something to bind to.
+        let mut app = App::new();
+        app.collection_browser._test_seed(vec!["docs".to_string()]);
+        app.active_screen = ActiveScreen::Collections;
+        assert!(app.handle_key_press(KeyCode::Char('d'), KeyModifiers::NONE));
+        assert!(matches!(
+            app.collection_browser.mode(),
+            crate::tui::collection_browser::Mode::ConfirmDelete(n) if n == "docs"
+        ));
+    }
+
+    #[test]
+    fn q_while_creating_in_collections_is_typed_as_text_not_quit() {
+        // Make sure the global quit suppression kicks in for the Collections
+        // screen's create form just like it does for Config and Search.
+        let mut app = App::new();
+        app.active_screen = ActiveScreen::Collections;
+        app.handle_key_press(KeyCode::Char('n'), KeyModifiers::NONE);
+        assert!(app.collection_browser.is_text_editing());
+
+        assert!(app.handle_key_press(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(!app.should_quit, "'q' in create form must not quit the app");
+        assert!(
+            matches!(
+                app.collection_browser.mode(),
+                crate::tui::collection_browser::Mode::Creating { buffer, .. } if buffer == "q"
+            ),
+            "'q' should be inserted into the create buffer"
+        );
     }
 }
