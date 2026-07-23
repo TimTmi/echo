@@ -59,6 +59,20 @@ impl SearchScreen {
         self.collection = name.to_string();
     }
 
+    /// Whether the screen is currently consuming text input. The search
+    /// input is always focused once `on_enter` has run, so this returns
+    /// `true` for the lifetime of the screen.
+    /// Used by `App` to decide whether global quit keys (`q`, `Ctrl+C`)
+    /// should fire.
+    pub fn is_text_editing(&self) -> bool {
+        self.input_focused
+    }
+
+    /// Read-only view of the current query text.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
     pub fn on_enter(&mut self) {
         self.results.clear();
         self.search_state = SearchState::Idle;

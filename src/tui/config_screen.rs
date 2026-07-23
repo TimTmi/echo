@@ -87,14 +87,20 @@ impl ConfigScreen {
         self.dirty
     }
 
-    /// Whether a field is currently being edited. Used by `App` to decide
-    /// whether global quit keys (`q`, `Ctrl+C`) should fire.
-    pub fn is_editing(&self) -> bool {
+    /// Whether the screen is currently consuming text input. Used by `App` to
+    /// decide whether global quit keys (`q`, `Ctrl+C`) should fire while a
+    /// user is typing in a field.
+    pub fn is_text_editing(&self) -> bool {
         self.editing
     }
 
     pub fn current_config(&self) -> &Config {
         &self.config
+    }
+
+    /// Read-only view of the in-progress edit buffer (empty when not editing).
+    pub fn edit_buffer(&self) -> &str {
+        &self.edit_buffer
     }
 
     /// String value of the currently selected field.

@@ -375,10 +375,13 @@ impl App {
         modifiers: crossterm::event::KeyModifiers,
     ) -> bool {
         // Global quit keys fire on every screen except when the active screen
-        // is currently consuming text input (e.g. editing a config field) ---
-        // otherwise typing 'q' inside the config editor would exit the app.
-        let suppress_global_quit =
-            matches!(self.active_screen, ActiveScreen::Config) && self.config_screen.is_editing();
+        // is currently consuming text input --- otherwise typing 'q' inside a
+        // search query or a config field would exit the app.
+        let suppress_global_quit = match self.active_screen {
+            ActiveScreen::Config => self.config_screen.is_text_editing(),
+            ActiveScreen::Search => self.search_screen.is_text_editing(),
+            _ => false,
+        };
 
         if !suppress_global_quit {
             match code {
@@ -507,22 +510,22 @@ mod tests {
     fn q_while_editing_does_not_quit_app() {
         let mut app = app_in_config_screen();
         app.handle_key_press(KeyCode::Enter, KeyModifiers::NONE);
-        assert!(app.config_screen.is_editing());
+        assert!(app.config_screen.is_text_editing());
 
         assert!(app.handle_key_press(KeyCode::Char('q'), KeyModifiers::NONE));
         assert!(!app.should_quit, "'q' typed during edit must not quit");
-        assert!(app.config_screen.is_editing());
+        // 'q' got inserted at the end of the seed qdrant_url buffer.
+        assert!(app.config_screen.edit_buffer().ends_with('q'));
     }
 
     #[test]
     fn ctrl_c_while_editing_does_not_quit_app() {
         let mut app = app_in_config_screen();
         app.handle_key_press(KeyCode::Enter, KeyModifiers::NONE);
-        assert!(app.config_screen.is_editing());
+        assert!(app.config_screen.is_text_editing());
 
         assert!(app.handle_key_press(KeyCode::Char('c'), KeyModifiers::CONTROL,));
         assert!(!app.should_quit, "Ctrl+C during edit must not quit");
-        assert!(app.config_screen.is_editing());
     }
 
     /// Regression: outside of edit mode the global quit keys still work.
@@ -530,6 +533,36 @@ mod tests {
     fn q_when_not_editing_still_quits_app() {
         let mut app = app_in_config_screen();
         // No Enter pressed -> config screen not editing.
+        assert!(app.handle_key_press(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(app.should_quit);
+    }
+
+    /// Search screen's query input is always focused, so global quit keys
+    /// must be suppressed there and the character must enter the query.
+    #[test]
+    fn q_in_search_screen_does_not_quit_and_inserts_into_query() {
+        let mut app = App::new();
+        app.active_screen = ActiveScreen::Search;
+
+        assert!(app.handle_key_press(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(!app.should_quit);
+        assert_eq!(app.search_screen.query(), "q");
+    }
+
+    #[test]
+    fn ctrl_c_in_search_screen_does_not_quit() {
+        let mut app = App::new();
+        app.active_screen = ActiveScreen::Search;
+
+        assert!(app.handle_key_press(KeyCode::Char('c'), KeyModifiers::CONTROL,));
+        assert!(!app.should_quit);
+    }
+
+    /// Regression: on a non-text-input screen, 'q' still quits.
+    #[test]
+    fn home_screen_q_still_quits_app() {
+        let mut app = App::new();
+        // active_screen is Home by default.
         assert!(app.handle_key_press(KeyCode::Char('q'), KeyModifiers::NONE));
         assert!(app.should_quit);
     }
