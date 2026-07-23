@@ -17,6 +17,36 @@ pub struct CollectionInfo {
     pub points_count: u64,
 }
 
+/// Vector configuration used for new collections. Project is locked to BGE-M3
+/// (1024-D Cosine); anything else would change the entire embedding math and
+/// is not supported in this app.
+const DEFAULT_COLLECTION_SIZE: usize = 1024;
+const DEFAULT_COLLECTION_DISTANCE: &str = "Cosine";
+
+/// What happened when we tried to ensure the default collection exists.
+#[derive(Debug, PartialEq, Eq)]
+pub enum EnsureOutcome {
+    Created,
+    AlreadyExists,
+}
+
+/// Outcome of renaming the default-collection config (old -> new) on Qdrant.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RenameOutcome {
+    /// Old and new are identical; nothing to do.
+    Unchanged,
+    /// No previous default and a non-empty new one was given.
+    Created,
+    /// Old existed, new did not; old deleted, new created.
+    Renamed,
+    /// Old existed; new already existed too. Both kept as-is to avoid data loss.
+    CollisionKept,
+    /// Old existed, new is `None` -- we drop the default but leave Qdrant alone.
+    DefaultCleared,
+    /// New is `None` and old was already `None` -- nothing to do.
+    NoDefault,
+}
+
 /// HTTP client for the Qdrant REST API.
 #[derive(Debug, Clone)]
 pub struct QdrantClient {
@@ -236,6 +266,122 @@ impl QdrantClient {
             points: result.points,
             next_offset: result.next_page_offset,
         })
+    }
+
+    /// Check whether a collection with the given name exists on Qdrant.
+    /// Returns `false` for both "not found" and any network error -- callers
+    /// treat "I don't know" the same as "no" for ensure-default purposes.
+    pub async fn collection_exists(&self, name: &str) -> bool {
+        let url = format!("{}/collections/{name}", self.base_url);
+        match self.client.get(&url).send().await {
+            Ok(resp) => resp.status().is_success(),
+            Err(_) => false,
+        }
+    }
+
+    /// Create a collection with the given vector configuration.
+    /// `PUT /collections/{name}` with body `{"vectors": {"size": ..., "distance": ...}}`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or Qdrant rejects (e.g.
+    /// `409` if the collection already exists).
+    pub async fn create_collection(
+        &self,
+        name: &str,
+        size: usize,
+        distance: &str,
+    ) -> anyhow::Result<()> {
+        let url = format!("{}/collections/{name}", self.base_url);
+        let body = serde_json::json!({
+            "vectors": { "size": size, "distance": distance }
+        });
+        let response = self
+            .client
+            .put(&url)
+            .json(&body)
+            .send()
+            .await
+            .context("failed to send create collection request")?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body_text = response.text().await.unwrap_or_default();
+            anyhow::bail!("create collection failed with status {status}: {body_text}");
+        }
+        Ok(())
+    }
+
+    /// Delete a collection. `DELETE /collections/{name}`.
+    /// A 404 (collection already absent) is treated as success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for other non-OK statuses or transport failures.
+    pub async fn delete_collection(&self, name: &str) -> anyhow::Result<()> {
+        let url = format!("{}/collections/{name}", self.base_url);
+        let response = self
+            .client
+            .delete(&url)
+            .send()
+            .await
+            .context("failed to send delete collection request")?;
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+        if !status.is_success() {
+            let body_text = response.text().await.unwrap_or_default();
+            anyhow::bail!("delete collection failed with status {status}: {body_text}");
+        }
+        Ok(())
+    }
+
+    /// Ensure `name` exists on Qdrant. Creates it with the BGE-M3 vector
+    /// configuration if missing. Used on App startup to guarantee that
+    /// `Config.default_collection` is always usable.
+    pub async fn ensure_default_collection(&self, name: &str) -> anyhow::Result<EnsureOutcome> {
+        if self.collection_exists(name).await {
+            return Ok(EnsureOutcome::AlreadyExists);
+        }
+        self.create_collection(name, DEFAULT_COLLECTION_SIZE, DEFAULT_COLLECTION_DISTANCE)
+            .await?;
+        Ok(EnsureOutcome::Created)
+    }
+
+    /// Apply a rename of the configured default collection: delete `old` if
+    /// it existed, create `new` if it didn't. If `new` already exists we
+    /// keep it as-is (return [`RenameOutcome::CollisionKept`]) to avoid
+    /// silently dropping an unrelated collection the user may have created
+    /// out-of-band.
+    pub async fn rename_default_collection(
+        &self,
+        old: Option<&str>,
+        new: Option<&str>,
+    ) -> anyhow::Result<RenameOutcome> {
+        match (old, new) {
+            (None, None) => Ok(RenameOutcome::NoDefault),
+            (Some(_), None) => Ok(RenameOutcome::DefaultCleared),
+            (None, Some(n)) => {
+                if self.collection_exists(n).await {
+                    Ok(RenameOutcome::CollisionKept)
+                } else {
+                    self.create_collection(n, DEFAULT_COLLECTION_SIZE, DEFAULT_COLLECTION_DISTANCE)
+                        .await?;
+                    Ok(RenameOutcome::Created)
+                }
+            }
+            (Some(o), Some(n)) if o == n => Ok(RenameOutcome::Unchanged),
+            (Some(o), Some(n)) => {
+                if self.collection_exists(n).await {
+                    Ok(RenameOutcome::CollisionKept)
+                } else {
+                    self.delete_collection(o).await?;
+                    self.create_collection(n, DEFAULT_COLLECTION_SIZE, DEFAULT_COLLECTION_DISTANCE)
+                        .await?;
+                    Ok(RenameOutcome::Renamed)
+                }
+            }
+        }
     }
 }
 
@@ -676,5 +822,248 @@ mod tests {
         assert!(err.contains("404"), "expected status 404 in: {err}");
 
         mock.assert();
+    }
+
+    // -----------------------------------------------------------------
+    // collection_exists / create / delete / ensure / rename
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_collection_exists_true() {
+        let (server, mock) = setup_mock("GET", "/collections/alpha", 200, "{}".into()).await;
+        let client = QdrantClient::new(server.url());
+        assert!(client.collection_exists("alpha").await);
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_collection_exists_false_on_404() {
+        let (server, mock) = setup_mock("GET", "/collections/missing", 404, "{}".into()).await;
+        let client = QdrantClient::new(server.url());
+        assert!(!client.collection_exists("missing").await);
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_create_collection_success() {
+        let body = json!({"result": true, "status": "ok", "time": 0.001}).to_string();
+        let (server, mock) = setup_mock("PUT", "/collections/general", 200, body).await;
+        let client = QdrantClient::new(server.url());
+        client
+            .create_collection("general", 1024, "Cosine")
+            .await
+            .expect("create should succeed on 200");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_create_collection_409_already_exists() {
+        let body = json!({
+            "status": "error",
+            "message": "Collection `general` already exists",
+            "time": 0.001
+        })
+        .to_string();
+        let (server, mock) = setup_mock("PUT", "/collections/general", 409, body).await;
+        let client = QdrantClient::new(server.url());
+        let err = client
+            .create_collection("general", 1024, "Cosine")
+            .await
+            .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("409"), "expected 409 in: {msg}");
+        assert!(msg.contains("already exists"), "expected body in: {msg}");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_delete_collection_success() {
+        let body = json!({"result": true, "status": "ok", "time": 0.001}).to_string();
+        let (server, mock) = setup_mock("DELETE", "/collections/general", 200, body).await;
+        let client = QdrantClient::new(server.url());
+        client
+            .delete_collection("general")
+            .await
+            .expect("delete should succeed on 200");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_delete_collection_404_is_ok() {
+        let body = json!({"status": "error", "message": "Not found"}).to_string();
+        let (server, mock) = setup_mock("DELETE", "/collections/ghost", 404, body).await;
+        let client = QdrantClient::new(server.url());
+        client
+            .delete_collection("ghost")
+            .await
+            .expect("delete should treat 404 as success");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_ensure_default_collection_creates_when_missing() {
+        let mut server = mockito::Server::new_async().await;
+        let _exists = server
+            .mock("GET", "/collections/general")
+            .with_status(404)
+            .with_header("content-type", "application/json")
+            .with_body("{}")
+            .create();
+        let create = server
+            .mock("PUT", "/collections/general")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({"result": true, "status": "ok"}).to_string())
+            .create();
+
+        let client = QdrantClient::new(server.url());
+        let outcome = client
+            .ensure_default_collection("general")
+            .await
+            .expect("ensure ok");
+        assert_eq!(outcome, EnsureOutcome::Created);
+        create.assert();
+    }
+
+    #[tokio::test]
+    async fn test_ensure_default_collection_already_exists_is_noop() {
+        let mut server = mockito::Server::new_async().await;
+        let exists = server
+            .mock("GET", "/collections/general")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body("{}")
+            .expect(1)
+            .create();
+
+        let client = QdrantClient::new(server.url());
+        let outcome = client
+            .ensure_default_collection("general")
+            .await
+            .expect("ensure ok");
+        assert_eq!(outcome, EnsureOutcome::AlreadyExists);
+        exists.assert();
+    }
+
+    #[tokio::test]
+    async fn test_rename_default_collection_unchanged() {
+        let server = mockito::Server::new_async().await;
+        let client = QdrantClient::new(server.url());
+        let outcome = client
+            .rename_default_collection(Some("general"), Some("general"))
+            .await
+            .unwrap();
+        assert_eq!(outcome, RenameOutcome::Unchanged);
+    }
+
+    #[tokio::test]
+    async fn test_rename_default_collection_rename_when_new_absent() {
+        let mut server = mockito::Server::new_async().await;
+        let exists_new = server
+            .mock("GET", "/collections/docs")
+            .with_status(404)
+            .with_header("content-type", "application/json")
+            .with_body("{}")
+            .create();
+        let delete_old = server
+            .mock("DELETE", "/collections/general")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({"result": true, "status": "ok"}).to_string())
+            .create();
+        let create_new = server
+            .mock("PUT", "/collections/docs")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({"result": true, "status": "ok"}).to_string())
+            .create();
+
+        let client = QdrantClient::new(server.url());
+        let outcome = client
+            .rename_default_collection(Some("general"), Some("docs"))
+            .await
+            .unwrap();
+        assert_eq!(outcome, RenameOutcome::Renamed);
+        exists_new.assert();
+        delete_old.assert();
+        create_new.assert();
+    }
+
+    #[tokio::test]
+    async fn test_rename_default_collection_collision_keeps_existing() {
+        let mut server = mockito::Server::new_async().await;
+        let exists_new = server
+            .mock("GET", "/collections/docs")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body("{}")
+            .expect(1)
+            .create();
+        let _must_not_delete = server
+            .mock("DELETE", "/collections/general")
+            .with_status(200)
+            .expect(0)
+            .create();
+        let _must_not_create = server
+            .mock("PUT", "/collections/docs")
+            .with_status(200)
+            .expect(0)
+            .create();
+
+        let client = QdrantClient::new(server.url());
+        let outcome = client
+            .rename_default_collection(Some("general"), Some("docs"))
+            .await
+            .unwrap();
+        assert_eq!(outcome, RenameOutcome::CollisionKept);
+        exists_new.assert();
+    }
+
+    #[tokio::test]
+    async fn test_rename_default_collection_create_only_when_old_none() {
+        let mut server = mockito::Server::new_async().await;
+        let exists_new = server
+            .mock("GET", "/collections/general")
+            .with_status(404)
+            .with_header("content-type", "application/json")
+            .with_body("{}")
+            .create();
+        let create_new = server
+            .mock("PUT", "/collections/general")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({"result": true, "status": "ok"}).to_string())
+            .create();
+
+        let client = QdrantClient::new(server.url());
+        let outcome = client
+            .rename_default_collection(None, Some("general"))
+            .await
+            .unwrap();
+        assert_eq!(outcome, RenameOutcome::Created);
+        exists_new.assert();
+        create_new.assert();
+    }
+
+    #[tokio::test]
+    async fn test_rename_default_collection_clear_leaves_qdrant_alone() {
+        let server = mockito::Server::new_async().await;
+        let client = QdrantClient::new(server.url());
+        let outcome = client
+            .rename_default_collection(Some("general"), None)
+            .await
+            .unwrap();
+        assert_eq!(outcome, RenameOutcome::DefaultCleared);
+    }
+
+    #[tokio::test]
+    async fn test_rename_default_collection_no_default_is_noop() {
+        let server = mockito::Server::new_async().await;
+        let client = QdrantClient::new(server.url());
+        let outcome = client
+            .rename_default_collection(None, None)
+            .await
+            .unwrap();
+        assert_eq!(outcome, RenameOutcome::NoDefault);
     }
 }

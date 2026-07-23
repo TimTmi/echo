@@ -101,6 +101,12 @@ impl ConfigScreen {
         self.editing
     }
 
+    /// Show a transient status/result message in the screen footer.
+    /// Used by `App` to surface external side-effects like collection renames.
+    pub fn set_flash(&mut self, msg: impl Into<String>) {
+        self.flash = Some((msg.into(), Instant::now()));
+    }
+
     pub fn current_config(&self) -> &Config {
         &self.config
     }

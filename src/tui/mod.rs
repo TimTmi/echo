@@ -10,7 +10,36 @@ pub mod search_screen;
 
 use crate::config::Config;
 use crate::embedding::EmbeddingClient;
-use crate::qdrant::QdrantClient;
+use crate::qdrant::{EnsureOutcome, QdrantClient, RenameOutcome};
+
+/// Translate a [`RenameOutcome`] into a user-facing one-liner for the flash
+/// banner after a save on the config screen.
+fn rename_outcome_message(
+    old: Option<&str>,
+    new: Option<&str>,
+    outcome: RenameOutcome,
+) -> String {
+    match outcome {
+        RenameOutcome::Unchanged => "Default collection unchanged.".to_string(),
+        RenameOutcome::Created => format!(
+            "Created default collection '{}'.",
+            new.unwrap_or("?")
+        ),
+        RenameOutcome::Renamed => format!(
+            "Renamed default collection: '{}' -> '{}'.",
+            old.unwrap_or("?"),
+            new.unwrap_or("?")
+        ),
+        RenameOutcome::CollisionKept => format!(
+            "Default set to '{}', which already exists; kept existing. 'general' was left as-is; rename not performed.",
+            new.unwrap_or("?")
+        ),
+        RenameOutcome::DefaultCleared => {
+            "Default cleared from config; existing Qdrant collection untouched.".to_string()
+        }
+        RenameOutcome::NoDefault => "No default collection configured.".to_string(),
+    }
+}
 use anyhow::Context;
 use collection_browser::CollectionBrowserScreen;
 use config_screen::{ConfigKeyOutcome, ConfigScreen};
@@ -63,6 +92,10 @@ pub struct App {
     point_viewer: PointViewerScreen,
     /// Configuration screen state.
     config_screen: ConfigScreen,
+    /// Most-recently-persisted default_collection name. After every key event
+    /// on the Config screen we diff against this to detect a save and trigger
+    /// the rename logic on Qdrant.
+    prev_persisted_default: Option<String>,
     /// Handle to the Tokio runtime for async operations.
     runtime_handle: Option<Handle>,
 }
@@ -80,6 +113,7 @@ impl Default for App {
             search_screen: SearchScreen::new(),
             point_viewer: PointViewerScreen::new(),
             config_screen: ConfigScreen::new(crate::config::Config::default()),
+            prev_persisted_default: None,
             runtime_handle: None,
         }
     }
@@ -106,6 +140,7 @@ impl App {
             search_screen: SearchScreen::new(),
             point_viewer: PointViewerScreen::new(),
             config_screen: ConfigScreen::new(config.clone()),
+            prev_persisted_default: config.default_collection.clone(),
             runtime_handle: None,
         }
     }
@@ -121,6 +156,20 @@ impl App {
     pub fn run(&mut self) -> anyhow::Result<()> {
         let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
         self.runtime_handle = Some(rt.handle().clone());
+
+        // Ensure the configured default collection exists on Qdrant before any
+        // UI work. Skipped if no default is configured. Failures flow into the
+        // status bar instead of crashing the app so the user can still fix
+        // their configuration.
+        if let Some(default) = self.prev_persisted_default.clone() {
+            match rt.block_on(self.qdrant_client.ensure_default_collection(&default)) {
+                Ok(EnsureOutcome::Created) | Ok(EnsureOutcome::AlreadyExists) => {}
+                Err(e) => {
+                    self.error_message =
+                        Some(format!("Failed to ensure default collection: {e:#}"));
+                }
+            }
+        }
 
         // Enter raw mode and alternate screen
         enable_raw_mode().context("failed to enable raw mode")?;
@@ -138,6 +187,37 @@ impl App {
         let _ = Self::restore_terminal();
 
         result
+    }
+
+    /// Check whether a recent save on the Config screen changed the persisted
+    /// default_collection. If so, run the rename logic on Qdrant and surface
+    /// the outcome in the config screen's flash message.
+    fn maybe_apply_config_save_side_effects(&mut self) {
+        // A save that just persisted will leave the screen clean -- dirty
+        // stays true while the user is still editing.
+        if self.config_screen.is_dirty() {
+            return;
+        }
+        let current = self.config_screen.current_config().default_collection.clone();
+        if current == self.prev_persisted_default {
+            return;
+        }
+        let old = self.prev_persisted_default.clone();
+        self.prev_persisted_default = current.clone();
+
+        let Some(handle) = self.runtime_handle.clone() else {
+            return;
+        };
+        let client = self.qdrant_client.clone();
+        let result = handle.block_on(client.rename_default_collection(
+            old.as_deref(),
+            current.as_deref(),
+        ));
+        let msg = match result {
+            Ok(outcome) => rename_outcome_message(old.as_deref(), current.as_deref(), outcome),
+            Err(e) => format!("Default-collection rename failed: {e:#}"),
+        };
+        self.config_screen.set_flash(msg);
     }
 
     /// Restore the terminal to normal mode.
@@ -466,16 +546,20 @@ impl App {
                 }
                 false
             }
-            ActiveScreen::Config => match self.config_screen.handle_key(code) {
-                ConfigKeyOutcome::Handled => true,
-                ConfigKeyOutcome::Back => {
-                    self.config_screen.discard();
-                    self.active_screen = ActiveScreen::Home;
-                    self.on_screen_enter();
-                    true
+            ActiveScreen::Config => {
+                let outcome = self.config_screen.handle_key(code);
+                self.maybe_apply_config_save_side_effects();
+                match outcome {
+                    ConfigKeyOutcome::Handled => true,
+                    ConfigKeyOutcome::Back => {
+                        self.config_screen.discard();
+                        self.active_screen = ActiveScreen::Home;
+                        self.on_screen_enter();
+                        true
+                    }
+                    ConfigKeyOutcome::Ignore => false,
                 }
-                ConfigKeyOutcome::Ignore => false,
-            },
+            }
         }
     }
 
@@ -619,5 +703,29 @@ mod tests {
         assert!(app.handle_key_press(KeyCode::Char('s'), KeyModifiers::NONE));
         assert_eq!(app.active_screen, ActiveScreen::Search);
         assert!(app.search_screen.collection().is_empty());
+    }
+
+    #[test]
+    fn rename_message_render_all_outcomes() {
+        use crate::qdrant::RenameOutcome::*;
+
+        assert_eq!(
+            rename_outcome_message(None, None, NoDefault),
+            "No default collection configured."
+        );
+        assert_eq!(
+            rename_outcome_message(Some("general"), None, DefaultCleared),
+            "Default cleared from config; existing Qdrant collection untouched."
+        );
+        assert_eq!(
+            rename_outcome_message(Some("general"), Some("general"), Unchanged),
+            "Default collection unchanged."
+        );
+        assert!(rename_outcome_message(None, Some("docs"), Created)
+            .contains("Created default collection 'docs'"));
+        assert!(rename_outcome_message(Some("general"), Some("docs"), Renamed)
+            .contains("Renamed default collection: 'general' -> 'docs'"));
+        assert!(rename_outcome_message(Some("general"), Some("docs"), CollisionKept)
+            .contains("already exists"));
     }
 }

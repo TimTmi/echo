@@ -131,6 +131,31 @@ Notes:
 
 ---
 
+## Collection Lifecycle
+
+Echo manages a single "default" collection tied to `Config.default_collection`. The vector config is locked to BGE-M3 (1024-D Cosine).
+
+### Endpoints used
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/collections/{name}` | Existence check before any ensure/rename |
+| `PUT` | `/collections/{name}` | Create with `{"vectors": {"size": 1024, "distance": "Cosine"}}` |
+| `DELETE` | `/collections/{name}` | Destroy during rename. 404 treated as success. |
+
+### Behaviour
+
+| Trigger | Outcome |
+|---|---|
+| App startup with `default_collection = Some(name)` | `ensure_default_collection(name)` runs. Creates if missing. |
+| `Config` save renames `X` -> `Y` where `Y` does not exist | Delete `X`, create `Y`. Flash: "Renamed default collection: 'X' -> 'Y'." |
+| `Config` save renames `X` -> `Y` where `Y` **does** exist | No destructive op. Both kept. Flash: "Default set to 'Y', which already exists; kept existing." |
+| `Config` save sets `None` -> `Some(Y)` where `Y` doesn't exist | Create `Y`. Flash: "Created default collection 'Y'." |
+| `Config` save clears `Some(X)` -> `None` | Qdrant untouched. Flash: "Default cleared from config..." |
+| `Config` save leaves `Some(X)` unchanged | No-op. Flash: "Default collection unchanged." |
+
+---
+
 ## Auth
 - Neither service uses authentication in the current local setup
 - Future: support Qdrant API key if needed
