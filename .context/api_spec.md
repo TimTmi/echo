@@ -103,18 +103,14 @@ Base URL: `http://embeddings.localhost` (Caddy vhost) or `http://localhost:8080`
 
 **Endpoint:** `POST /v1/embeddings`
 
-**Request (OpenAI-compat, verified live):**
+**Request (OpenAI-compat, code and live agree):**
 ```json
 { "input": "Your text here", "model": "BGE-M3" }
 ```
 
-**Code currently sends:**
-```json
-{ "content": "Your text here" }
-```
-**Untested**: the `content` field is not standard OpenAI-compat. The server may accept it as a non-standard alias, or reject it. Needs live verification before assuming Search works. If it rejects, change `EmbeddingRequest` struct in `src/embedding/mod.rs` to use `input`.
+**URL config requirement**: `embedding_url` in `echo.toml` must include the path `/v1/embeddings`. POSTing to the bare hostname (e.g. `http://embeddings.localhost`) returns 404 because there's no handler at the root.
 
-**Response (observed live):**
+**Response (OpenAI-compat, code and live agree):**
 ```json
 {
   "model": "BGE-M3",
@@ -125,12 +121,13 @@ Base URL: `http://embeddings.localhost` (Caddy vhost) or `http://localhost:8080`
   ]
 }
 ```
-**Gotcha**: embedding vector lives inside `data[0].embedding`, not at top-level `embedding`. Same blind-spot as the collections-list bug — code's `EmbeddingResponse` struct expects top-level `embedding`. Will fail to parse on real server.
+The embedding vector lives at `data[0].embedding`, not at top-level.
 
 Notes:
 - BGE-M3 returns a **1024-dimensional** float vector
 - llama.cpp is running in `--embeddings` mode (no text generation)
 - The `/v1/embeddings` endpoint is OpenAI-API-compatible
+- `model` in the request carries through to llama-server for routing (BGE-M3 expected)
 
 ---
 
