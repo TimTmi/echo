@@ -55,7 +55,7 @@
 
 **Decision**: Option A (source-label fanout inside `SearchScreen`). When `collection` is empty, iterate all collections returned by `list_collections`, run `search_points` on each, merge results sorted by score, prefix each row with source collection name.
 
-**Status**: Accepted. Implementation deferred until after Phase 3 (upsert/delete) ships.
+**Status**: Implemented 2026-07-24. See `progress.md` for details.
 
 ### 2026-07-23: Collection CRUD lives inline in the Collections screen, not in a new `ActiveScreen`
 - **Decision**: Implement Create and Delete for collections as additional `Mode` variants on `CollectionBrowserScreen` rather than introducing a second screen (e.g. `ActiveScreen::CollectionManage`).

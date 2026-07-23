@@ -408,6 +408,10 @@ pub struct SearchResult {
     pub score: Option<f64>,
     pub payload: Option<serde_json::Map<String, serde_json::Value>>,
     pub vector: Option<Vec<f64>>,
+    /// Source collection name, set by cross-collection search fan-out.
+    /// Skipped during deserialization — Qdrant does not return this.
+    #[serde(skip)]
+    pub source_collection: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

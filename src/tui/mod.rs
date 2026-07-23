@@ -399,7 +399,13 @@ impl App {
             ActiveScreen::Collections => {
                 " [Q]uit | [↑/↓] Navigate | [Enter/R] Refresh │ [N] New │ [D] Delete │ [P]oints │ [S]earch │ [Esc] Back "
             }
-            ActiveScreen::Search => " [Q]uit | Type query + Enter to search | [Esc] Back ",
+            ActiveScreen::Search => {
+                if self.search_screen.collection().is_empty() {
+                    " [Q]uit | Cross-collection search (ALL collections) | Type query + Enter | [Esc] Back "
+                } else {
+                    " [Q]uit | Type query + Enter to search | [Esc] Back "
+                }
+            }
             ActiveScreen::PointViewer => {
                 " [Q]uit | [↑/↓] Navigate | [N]ext page | [P]rev | [R]efresh | [Esc] Back "
             }
