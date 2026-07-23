@@ -4,6 +4,7 @@
 //! Provides the main application loop, event handling, and screen rendering.
 
 pub mod collection_browser;
+pub mod config_screen;
 pub mod point_viewer;
 pub mod search_screen;
 
@@ -11,6 +12,7 @@ use crate::embedding::EmbeddingClient;
 use crate::qdrant::QdrantClient;
 use anyhow::Context;
 use collection_browser::CollectionBrowserScreen;
+use config_screen::{ConfigKeyOutcome, ConfigScreen};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -35,6 +37,7 @@ enum ActiveScreen {
     Collections,
     Search,
     PointViewer,
+    Config,
 }
 
 /// Application state for the TUI.
@@ -57,6 +60,8 @@ pub struct App {
     search_screen: SearchScreen,
     /// Point viewer screen state.
     point_viewer: PointViewerScreen,
+    /// Configuration screen state.
+    config_screen: ConfigScreen,
     /// Handle to the Tokio runtime for async operations.
     runtime_handle: Option<Handle>,
 }
@@ -73,6 +78,7 @@ impl Default for App {
             collection_browser: CollectionBrowserScreen::new(),
             search_screen: SearchScreen::new(),
             point_viewer: PointViewerScreen::new(),
+            config_screen: ConfigScreen::new(crate::config::Config::default()),
             runtime_handle: None,
         }
     }
@@ -166,6 +172,9 @@ impl App {
             ActiveScreen::PointViewer => {
                 self.point_viewer.on_enter();
             }
+            ActiveScreen::Config => {
+                self.config_screen.on_enter();
+            }
             ActiveScreen::Home => {}
         }
     }
@@ -189,6 +198,9 @@ impl App {
                     self.point_viewer.tick(&self.qdrant_client, handle);
                 }
             }
+            ActiveScreen::Config => {
+                self.config_screen.tick();
+            }
             ActiveScreen::Home => {}
         }
     }
@@ -208,6 +220,7 @@ impl App {
             ActiveScreen::Collections => self.collection_browser.render(frame, layout[1]),
             ActiveScreen::Search => self.search_screen.render(frame, layout[1]),
             ActiveScreen::PointViewer => self.point_viewer.render(frame, layout[1]),
+            ActiveScreen::Config => self.config_screen.render(frame, layout[1]),
         }
         self.render_status_bar(frame, layout[2]);
     }
@@ -258,6 +271,14 @@ impl App {
                 Style::default().fg(Color::Cyan),
             )),
             Line::from(Span::styled(
+                "Press 's' to search semantically",
+                Style::default().fg(Color::Cyan),
+            )),
+            Line::from(Span::styled(
+                "Press 'g' to open config",
+                Style::default().fg(Color::Cyan),
+            )),
+            Line::from(Span::styled(
                 "Press 'q' or Esc to quit",
                 Style::default().fg(Color::DarkGray),
             )),
@@ -279,13 +300,16 @@ impl App {
     /// Render the status bar at the bottom.
     fn render_status_bar(&self, frame: &mut ratatui::Frame, area: Rect) {
         let hints = match self.active_screen {
-            ActiveScreen::Home => " [Q]uit | [C]ollections | [S]earch ",
+            ActiveScreen::Home => " [Q]uit | [C]ollections | [S]earch | [G]onfig ",
             ActiveScreen::Collections => {
                 " [Q]uit | [↑/↓] Navigate | [Enter/R] Refresh detail | [Esc] Back "
             }
             ActiveScreen::Search => " [Q]uit | Type query + Enter to search | [Esc] Back ",
             ActiveScreen::PointViewer => {
                 " [Q]uit | [↑/↓] Navigate | [N]ext page | [P]rev | [R]efresh | [Esc] Back "
+            }
+            ActiveScreen::Config => {
+                " [Q]uit | [↑/↓] select | [Enter] edit | [s] save | [d] discard | [Esc] back "
             }
         };
 
@@ -397,6 +421,16 @@ impl App {
                 }
                 false
             }
+            ActiveScreen::Config => match self.config_screen.handle_key(code) {
+                ConfigKeyOutcome::Handled => true,
+                ConfigKeyOutcome::Back => {
+                    self.config_screen.discard();
+                    self.active_screen = ActiveScreen::Home;
+                    self.on_screen_enter();
+                    true
+                }
+                ConfigKeyOutcome::Ignore => false,
+            },
         }
     }
 
@@ -410,6 +444,11 @@ impl App {
             }
             KeyCode::Char('s') | KeyCode::Char('S') => {
                 self.active_screen = ActiveScreen::Search;
+                self.on_screen_enter();
+                true
+            }
+            KeyCode::Char('g') | KeyCode::Char('G') => {
+                self.active_screen = ActiveScreen::Config;
                 self.on_screen_enter();
                 true
             }

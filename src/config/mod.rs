@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Application configuration stored in a local TOML file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub qdrant_url: String,
     pub embedding_url: String,
