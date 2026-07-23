@@ -10,7 +10,7 @@ Single Rust binary with a ratatui-based terminal UI. The app is a standalone cli
 | **TUI Layer** (ratatui) | Render terminal UI, handle keyboard input, manage screen state (collection list, search results, settings) |
 | **Qdrant Client** | REST API client for Qdrant — create/delete collections, upsert/search points, view collection info |
 | **Embedding Client** | HTTP client for llama.cpp embedding server (BGE-M3) — generate embeddings from text |
-| **Config Module** | Load/save local config (connection URLs, defaults) from a TOML/YAML file |
+| **Config Module** | Load/save local config (connection URLs, defaults) from a TOML file |
 | **App State / Controller** | Orchestrate between UI events and service clients, manage application state machine |
 
 ## Communication

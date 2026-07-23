@@ -16,7 +16,7 @@
 |---|---|---|
 | `qdrant_url` | string | Qdrant REST API base URL (default: `http://localhost:6333`) |
 | `embedding_url` | string | llama.cpp embedding endpoint (default: `http://localhost:8080/v1/embeddings`) |
-| `default_collection` | string | Last-used collection name |
+| `default_collection` | Option<string> | Last-used collection name (None = no default) |
 | `embedding_model` | string | Model name for display (default: `BGE-M3`) |
 
 ## Relationships

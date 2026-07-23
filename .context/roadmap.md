@@ -23,4 +23,4 @@
 - [ ] History / recent searches
 - [ ] Payload filtering UI
 - [ ] Performance optimizations for large collections
-- [ ] **Cross-collection search** (proposal pending) — auto-fallback inside `SearchScreen` when no collection is selected: fan out `search_points` to every loaded collection, merge by score, label each result with its source. Three options under consideration (auto-fallback vs explicit screen vs explicit toggle) — see `decisions.md` 2026-07-23 entry.
+- [ ] **Cross-collection search** (accepted, deferred) — auto-fallback inside `SearchScreen` when no collection is selected: fan out `search_points` to every loaded collection, merge by score, label each result with its source. Decision (Option A) recorded in `decisions.md`. Deferred until after upsert/delete ships.

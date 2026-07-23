@@ -40,7 +40,7 @@
 - **Reason**: `SearchScreen.collection` was never wired by either path that entered it (Home `s`, Collections `S`). Effect: `/points/search` URL became `/collections//points/search` → opaque 404 that masked the actual problem (empty string in URL). A guard in the screen plus an explicit setter on entry keeps the contract local and testable.
 - **Consequences**: Each new screen needs an explicit setter for its preconditions, plus a test pair (with-precondition passes through; without-precondition shows clean error).
 
-### 2026-07-23: Cross-collection search (proposal, not yet implemented)
+### 2026-07-23: Cross-collection search (accepted, not yet implemented)
 - **Status**: ADR pending. Awaiting user's choice between alternatives below.
 - **Problem**: `SearchScreen.collection` is empty when the user has `default_collection = None` and hasn't first drilled into Collections. Today this hard-errors with "no collection selected." But Qdrant has no native cross-collection query endpoint; the natural fix is client-side fanout (one `search_points` per collection, merged by score). Auto-running that fanout when no collection is selected removes the dead-end UX for users who don't configure a default.
 - **Alternatives under consideration**:
@@ -52,6 +52,10 @@
   - Vector-shape drift: if any collection uses non-BGE-M3 config (different size or distance), fanout returns errors for those and silently misses results. Mitigation: at fanout time, fetch each collection's info first and skip those whose vector config doesn't match `BGE-M3` shape, surface a warning.
   - Score semantics: cosine scores from different collections are still numerically comparable (same distance), but ordering with payload-filtered collections is not. Mitigation: warn in flash if any collection in the fanout uses a non-Cosine distance.
   - Latency: N round-trips. Mitigation later (out of scope here): parallel fanout via `tokio::join!`.
+
+**Decision**: Option A (source-label fanout inside `SearchScreen`). When `collection` is empty, iterate all collections returned by `list_collections`, run `search_points` on each, merge results sorted by score, prefix each row with source collection name.
+
+**Status**: Accepted. Implementation deferred until after Phase 3 (upsert/delete) ships.
 
 ### 2026-07-23: Collection CRUD lives inline in the Collections screen, not in a new `ActiveScreen`
 - **Decision**: Implement Create and Delete for collections as additional `Mode` variants on `CollectionBrowserScreen` rather than introducing a second screen (e.g. `ActiveScreen::CollectionManage`).
