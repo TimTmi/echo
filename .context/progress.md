@@ -23,6 +23,7 @@
   - Config gains `PartialEq` so dirty tracking can compare the working copy against the last-saved snapshot.
   - App gains `ActiveScreen::Config` variant + key wiring; Home key `g` opens config; status bar hints updated.
   - 12 unit tests covering navigation, edit/commit/cancel, dirty round-trip, default_collection None/Some, save/discard.
+- **Config -> Clients wiring (2026-07-23)**: `App::with_config(&Config)` constructor builds `QdrantClient` and `EmbeddingClient` from `cfg.qdrant_url` / `cfg.embedding_url`. `main.rs` now calls it with the loaded config instead of discarding into `_`. Edits saved through the config screen take effect on next launch.
 
 ## In Progress
 - No active task
