@@ -151,10 +151,7 @@ impl QdrantClient {
         vector: &[f32],
         limit: usize,
     ) -> anyhow::Result<Vec<SearchResult>> {
-        let url = format!(
-            "{}/collections/{collection}/points/search",
-            self.base_url
-        );
+        let url = format!("{}/collections/{collection}/points/search", self.base_url);
         let body = serde_json::json!({
             "vector": vector,
             "limit": limit,
@@ -183,6 +180,77 @@ impl QdrantClient {
 
         Ok(search_response.result.unwrap_or_default())
     }
+
+    /// Scroll points in a collection with cursor-based pagination.
+    ///
+    /// Calls `POST /collections/{name}/points/scroll`. Pass `offset=None` for
+    /// the first page; pass `next_offset` returned by the previous call to fetch
+    /// the next page. When `next_offset` is `None` or absent, there are no more
+    /// points to paginate.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or the response is unparseable.
+    pub async fn scroll_points(
+        &self,
+        collection: &str,
+        limit: usize,
+        offset: Option<&serde_json::Value>,
+    ) -> anyhow::Result<ScrollPage> {
+        let url = format!("{}/collections/{collection}/points/scroll", self.base_url);
+
+        let mut body = serde_json::json!({
+            "limit": limit,
+            "with_payload": true,
+            "with_vector": false,
+        });
+        if let Some(off) = offset {
+            body["offset"] = off.clone();
+        }
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .context("failed to send scroll request")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("scroll failed with status {status}: {body}");
+        }
+
+        let scroll_response: ScrollResponse = response
+            .json()
+            .await
+            .context("failed to parse scroll response")?;
+
+        let result = scroll_response.result.unwrap_or(ScrollResult {
+            points: Vec::new(),
+            next_page_offset: None,
+        });
+        Ok(ScrollPage {
+            points: result.points,
+            next_offset: result.next_page_offset,
+        })
+    }
+}
+
+/// A page of points returned by `scroll_points`, plus the cursor for the next page.
+#[derive(Debug, Clone, Default)]
+pub struct ScrollPage {
+    pub points: Vec<PointRecord>,
+    /// Pass back as `offset` on the next call. `None` means no more pages.
+    pub next_offset: Option<serde_json::Value>,
+}
+
+/// A single point in a collection (returned by scroll).
+#[derive(Debug, Clone, Deserialize)]
+pub struct PointRecord {
+    pub id: serde_json::Value,
+    pub payload: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// A single matched point from a Qdrant search result.
@@ -253,6 +321,23 @@ struct CollectionConfig {
 #[derive(Debug, Deserialize)]
 struct CollectionParams {
     vectors: Option<serde_json::Map<String, Value>>,
+}
+
+/// Response for a scroll request.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct ScrollResponse {
+    result: Option<ScrollResult>,
+    status: Option<String>,
+    time: Option<f64>,
+}
+
+/// The `result` field of a scroll response.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct ScrollResult {
+    points: Vec<PointRecord>,
+    next_page_offset: Option<serde_json::Value>,
 }
 
 #[cfg(test)]
@@ -448,6 +533,136 @@ mod tests {
             err_msg.contains("no result"),
             "expected 'no result' in error: {err_msg}"
         );
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_scroll_points_basic() {
+        let response_body = json!({
+            "result": {
+                "points": [
+                    { "id": 1, "payload": {"text": "hello"}, "version": 0 },
+                    { "id": 2, "payload": {"text": "world"}, "version": 1 }
+                ],
+                "next_page_offset": 2
+            },
+            "status": "ok",
+            "time": 0.001
+        })
+        .to_string();
+
+        let (server, mock) = setup_mock(
+            "POST",
+            "/collections/docs/points/scroll",
+            200,
+            response_body,
+        )
+        .await;
+        let client = QdrantClient::new(server.url());
+
+        let page = client
+            .scroll_points("docs", 20, None)
+            .await
+            .expect("scroll failed");
+        assert_eq!(page.points.len(), 2);
+        assert_eq!(page.points[0].id, json!(1));
+        assert_eq!(
+            page.points[0].payload.as_ref().and_then(|p| p.get("text")),
+            Some(&json!("hello"))
+        );
+        assert_eq!(page.next_offset, Some(json!(2)));
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_scroll_points_with_offset() {
+        let response_body = json!({
+            "result": {
+                "points": [
+                    { "id": "uuid-3", "payload": {"k": "v"} }
+                ],
+                "next_page_offset": null
+            },
+            "status": "ok",
+            "time": 0.001
+        })
+        .to_string();
+
+        let (server, mock) = setup_mock(
+            "POST",
+            "/collections/notes/points/scroll",
+            200,
+            response_body,
+        )
+        .await;
+        let client = QdrantClient::new(server.url());
+
+        let offset = json!("uuid-2");
+        let page = client
+            .scroll_points("notes", 10, Some(&offset))
+            .await
+            .expect("scroll failed");
+        assert_eq!(page.points.len(), 1);
+        assert_eq!(page.next_offset, None, "null offset means end of pages");
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_scroll_points_empty_collection() {
+        let response_body = json!({
+            "result": {
+                "points": [],
+                "next_page_offset": null
+            },
+            "status": "ok",
+            "time": 0.001
+        })
+        .to_string();
+
+        let (server, mock) = setup_mock(
+            "POST",
+            "/collections/empty/points/scroll",
+            200,
+            response_body,
+        )
+        .await;
+        let client = QdrantClient::new(server.url());
+
+        let page = client
+            .scroll_points("empty", 20, None)
+            .await
+            .expect("scroll failed");
+        assert!(page.points.is_empty());
+        assert_eq!(page.next_offset, None);
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_scroll_points_http_error() {
+        let response_body = json!({
+            "status": "error",
+            "message": "collection not found",
+            "time": 0.001
+        })
+        .to_string();
+
+        let (server, mock) = setup_mock(
+            "POST",
+            "/collections/missing/points/scroll",
+            404,
+            response_body,
+        )
+        .await;
+        let client = QdrantClient::new(server.url());
+
+        let result = client.scroll_points("missing", 20, None).await;
+        assert!(result.is_err(), "expected error on 404");
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(err.contains("404"), "expected status 404 in: {err}");
 
         mock.assert();
     }

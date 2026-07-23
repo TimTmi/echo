@@ -5,7 +5,6 @@
 
 use crate::qdrant::QdrantClient;
 use crossterm::event::KeyCode;
-use tokio::runtime::Handle;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -13,6 +12,7 @@ use ratatui::widgets::{
     Block, BorderType, Borders, List, ListDirection, ListItem, ListState, Paragraph, Wrap,
 };
 use std::collections::HashMap;
+use tokio::runtime::Handle;
 
 /// State of the collection list data.
 #[derive(Debug, Default, PartialEq)]
@@ -47,6 +47,16 @@ impl Default for CollectionBrowserScreen {
 }
 
 impl CollectionBrowserScreen {
+    /// Return the currently selected index in the collection list, if any.
+    pub fn selected_index(&self) -> Option<usize> {
+        self.list_state.selected()
+    }
+
+    /// Read-only access to the loaded collection names.
+    pub fn collection_names(&self) -> &[String] {
+        &self.collection_names
+    }
+
     /// Create a new collection browser screen.
     pub fn new() -> Self {
         Self {

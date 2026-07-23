@@ -4,23 +4,25 @@
 //! Provides the main application loop, event handling, and screen rendering.
 
 pub mod collection_browser;
+pub mod point_viewer;
 pub mod search_screen;
 
 use crate::embedding::EmbeddingClient;
 use crate::qdrant::QdrantClient;
 use anyhow::Context;
 use collection_browser::CollectionBrowserScreen;
-use search_screen::SearchScreen;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+use point_viewer::PointViewerScreen;
 use ratatui::Terminal;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use search_screen::SearchScreen;
 use std::io::stdout;
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
@@ -32,6 +34,7 @@ enum ActiveScreen {
     Home,
     Collections,
     Search,
+    PointViewer,
 }
 
 /// Application state for the TUI.
@@ -52,6 +55,8 @@ pub struct App {
     collection_browser: CollectionBrowserScreen,
     /// Search screen state.
     search_screen: SearchScreen,
+    /// Point viewer screen state.
+    point_viewer: PointViewerScreen,
     /// Handle to the Tokio runtime for async operations.
     runtime_handle: Option<Handle>,
 }
@@ -67,6 +72,7 @@ impl Default for App {
             embedding_client: EmbeddingClient::new("http://localhost:8080/v1/embeddings"),
             collection_browser: CollectionBrowserScreen::new(),
             search_screen: SearchScreen::new(),
+            point_viewer: PointViewerScreen::new(),
             runtime_handle: None,
         }
     }
@@ -157,6 +163,9 @@ impl App {
             ActiveScreen::Search => {
                 self.search_screen.on_enter();
             }
+            ActiveScreen::PointViewer => {
+                self.point_viewer.on_enter();
+            }
             ActiveScreen::Home => {}
         }
     }
@@ -173,6 +182,11 @@ impl App {
                 if let Some(handle) = &self.runtime_handle {
                     self.search_screen
                         .tick(&self.qdrant_client, &self.embedding_client, handle);
+                }
+            }
+            ActiveScreen::PointViewer => {
+                if let Some(handle) = &self.runtime_handle {
+                    self.point_viewer.tick(&self.qdrant_client, handle);
                 }
             }
             ActiveScreen::Home => {}
@@ -193,6 +207,7 @@ impl App {
             ActiveScreen::Home => self.render_body(frame, layout[1]),
             ActiveScreen::Collections => self.collection_browser.render(frame, layout[1]),
             ActiveScreen::Search => self.search_screen.render(frame, layout[1]),
+            ActiveScreen::PointViewer => self.point_viewer.render(frame, layout[1]),
         }
         self.render_status_bar(frame, layout[2]);
     }
@@ -268,8 +283,9 @@ impl App {
             ActiveScreen::Collections => {
                 " [Q]uit | [↑/↓] Navigate | [Enter/R] Refresh detail | [Esc] Back "
             }
-            ActiveScreen::Search => {
-                " [Q]uit | Type query + Enter to search | [Esc] Back "
+            ActiveScreen::Search => " [Q]uit | Type query + Enter to search | [Esc] Back ",
+            ActiveScreen::PointViewer => {
+                " [Q]uit | [↑/↓] Navigate | [N]ext page | [P]rev | [R]efresh | [Esc] Back "
             }
         };
 
@@ -334,6 +350,19 @@ impl App {
                 if handled {
                     return true;
                 }
+                // 'P' drills into the selected collection's points.
+                if matches!(code, KeyCode::Char('p') | KeyCode::Char('P')) {
+                    if let Some(idx) = self.collection_browser.selected_index() {
+                        let names = self.collection_browser.collection_names();
+                        if let Some(name) = names.get(idx) {
+                            self.point_viewer.set_collection(name);
+                            self.active_screen = ActiveScreen::PointViewer;
+                            self.on_screen_enter();
+                            return true;
+                        }
+                    }
+                    return true;
+                }
                 // Esc on collections screen goes back to home
                 if code == KeyCode::Esc {
                     self.active_screen = ActiveScreen::Home;
@@ -350,6 +379,19 @@ impl App {
                 // Esc on search screen goes back to home
                 if code == KeyCode::Esc {
                     self.active_screen = ActiveScreen::Home;
+                    self.on_screen_enter();
+                    return true;
+                }
+                false
+            }
+            ActiveScreen::PointViewer => {
+                let handled = self.point_viewer.handle_key(code);
+                if handled {
+                    return true;
+                }
+                // Esc on point viewer returns to collections
+                if code == KeyCode::Esc {
+                    self.active_screen = ActiveScreen::Collections;
                     self.on_screen_enter();
                     return true;
                 }

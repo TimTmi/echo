@@ -9,9 +9,7 @@ use crossterm::event::KeyCode;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, BorderType, Borders, List, ListDirection, ListItem, Paragraph,
-};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListDirection, ListItem, Paragraph};
 use tokio::runtime::Handle;
 
 /// State of the search pipeline.
@@ -83,8 +81,7 @@ impl SearchScreen {
                         self.search_state = SearchState::Searching;
                     }
                     Err(e) => {
-                        self.search_state =
-                            SearchState::Error(format!("Embedding failed: {e:#}"));
+                        self.search_state = SearchState::Error(format!("Embedding failed: {e:#}"));
                     }
                 }
             }
@@ -98,8 +95,7 @@ impl SearchScreen {
                         self.search_state = SearchState::Done;
                     }
                     Err(e) => {
-                        self.search_state =
-                            SearchState::Error(format!("Search failed: {e:#}"));
+                        self.search_state = SearchState::Error(format!("Search failed: {e:#}"));
                     }
                 }
             }
@@ -285,7 +281,9 @@ impl SearchScreen {
                         Span::styled(format!("#{}  ", i), Style::default().fg(Color::DarkGray)),
                         Span::styled(
                             format!("Score: {:.4}", score),
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
                         ),
                         Span::styled(
                             format!("  ID: {}", id_str),
