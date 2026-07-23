@@ -14,9 +14,16 @@ Single Rust binary with a ratatui-based terminal UI. The app is a standalone cli
 | **App State / Controller** | Orchestrate between UI events and service clients, manage application state machine |
 
 ## Communication
-- **Echo ↔ Qdrant:** HTTP REST API (or optionally gRPC) on localhost:6333 / qdrant.localhost:80
-- **Echo ↔ llama.cpp (BGE-M3):** HTTP POST to `/v1/embeddings` on localhost:8080 / embeddings.localhost:80
+- **Echo ↔ Qdrant:** HTTP REST API (or optionally gRPC) on localhost:6333 / qdrant.localhost
+- **Echo ↔ llama.cpp (BGE-M3):** HTTP POST to `/v1/embeddings` on localhost:8080 / embeddings.localhost
 - **Echo ↔ Config File:** Local file read/write (TOML), no network involved
+
+### Hostname DNS for `.localhost` vhosts
+`*.localhost` hostnames (e.g. `qdrant.localhost`, `embeddings.localhost`) resolve to `127.0.0.1` only inside browsers (RFC 6761 magic). The Rust `reqwest` client uses OS DNS, which does **not** apply that rule — connections would fail DNS lookup.
+
+**Required**: hosts file entry mapping `qdrant.localhost` and `embeddings.localhost` to `127.0.0.1`. This preserves the Caddy vhost `Host` header so per-vhost routing still works (URL-level rewrites drop the header and would break vhost selection).
+
+Hosts file: `C:\Windows\System32\drivers\etc\hosts` (edit requires admin).
 
 ## Key Reliability Patterns
 - Graceful error handling for service disconnections (Qdrant / llama.cpp unreachable)

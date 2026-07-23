@@ -68,6 +68,7 @@ impl QdrantClient {
 
         let names = list_response
             .result
+            .map(|r| r.collections)
             .unwrap_or_default()
             .into_iter()
             .map(|c| c.name)
@@ -280,9 +281,17 @@ struct SearchResponse {
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct CollectionsListResponse {
-    result: Option<Vec<CollectionSummary>>,
+    result: Option<CollectionsListResult>,
     status: Option<String>,
     time: Option<f64>,
+}
+
+/// The `result` field of a collections list response.
+/// Qdrant nests the array of collections under a `collections` key.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct CollectionsListResult {
+    collections: Vec<CollectionSummary>,
 }
 
 /// A single collection entry in the list response.
@@ -365,7 +374,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_collections_empty() {
         let response_body = json!({
-            "result": [],
+            "result": {"collections": []},
             "status": "ok",
             "time": 0.001
         })
@@ -384,10 +393,12 @@ mod tests {
     #[tokio::test]
     async fn test_list_collections_two_items() {
         let response_body = json!({
-            "result": [
-                {"name": "documents"},
-                {"name": "images"}
-            ],
+            "result": {
+                "collections": [
+                    {"name": "documents"},
+                    {"name": "images"}
+                ]
+            },
             "status": "ok",
             "time": 0.002
         })

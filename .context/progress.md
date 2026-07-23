@@ -2,7 +2,8 @@
 
 ## Completed
 - **Project Kickoff**: Project scoped, tech stack chosen (Rust + ratatui + Qdrant + BGE-M3/llama.cpp)
-- **Infrastructure**: Qdrant and BGE-M3 embedding service running via Docker/llama.cpp at D:\embedding\
+- **Infrastructure**: Qdrant and BGE-M3 embedding service running via Docker/llama.cpp at D:\embeddings (renamed from D:\embedding on 2026-07-23). Caddy reverse proxy routes `qdrant.localhost` and `embeddings.localhost` vhosts. Browser auto-resolves `.localhost` per RFC 6761; Rust clients require hosts file entries or custom resolver.
+- **`GET /collections` parse fix (2026-07-23)**: Qdrant returns `{"result":{"collections":[…]}}` but client deserializer previously expected `{"result":[…]}` (array directly). Added `CollectionsListResult` wrapper struct in `src/qdrant/mod.rs`; updated `list_collections()` extraction. Two list-collections tests updated to use nested `result.collections` fixture. Hosts file entries added for `qdrant.localhost` and `embeddings.localhost` → `127.0.0.1` so Caddy vhost Host header survives.
 - **Git Setup**: git init, branch renamed to main, remote configured, first commits pushed
 - **Context Initialized**: .context/ folder created with project brief, design, data models, API spec, coding rules, roadmap, decisions
 - **Rust Project Scaffold**: Cargo.toml with core deps, module skeleton (config/, qdrant/, embedding/, tui/), config module with TOML load/save and defaults, .gitignore

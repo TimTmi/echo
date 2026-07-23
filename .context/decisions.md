@@ -27,3 +27,10 @@
 - **Decision**: Store connection settings in a TOML file
 - **Reason**: TOML is the standard Rust ecosystem config format (serde support via `toml` crate), human-readable, and easy to edit by hand.
 - **Consequences**: Users can pre-configure before launching the app. Config is simple enough that no schema migration complexity is expected.
+
+## Testing
+
+### 2026-07-23: Deserialization fixtures must mirror live API responses
+- **Decision**: When adding or updating serde-based response structs, capture a live response from the real service and use that as the test fixture. Do not author fixtures from the struct shape alone.
+- **Reason**: Mocks validated from struct-instead-of-from-API pass tests but break against the live service. Concretely hit on 2026-07-23: `CollectionsListResponse.result` was modeled as `Vec<…>` while real Qdrant returns an object `{ collections: Vec<…> }`. Tests fabricated with `{"result": […]}` passed; live response failed to parse. Same risk applies to `EmbeddingResponse` (suspected live shape: `data[0].embedding`, code expects top-level `embedding`).
+- **Consequences**: One-time cost to capture a live response per endpoint. Future drift between docs and live service surfaces only at the live test layer, not from author-written fixtures.
