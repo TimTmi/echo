@@ -16,7 +16,7 @@
 - [ ] Create / delete collections from the TUI
 - [ ] Upsert points (paste or load from file)
 - [ ] Delete points by filter or ID
-- [ ] Configuration screen (edit Qdrant URL, embedding URL from TUI)
+- [x] Configuration screen (edit Qdrant URL, embedding URL from TUI)
 
 ## Phase 4: Polish & Extensibility
 - [ ] Support multiple embedding providers (Ollama, OpenAI API-compatible)

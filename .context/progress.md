@@ -18,6 +18,11 @@
   - Page size = 20. Pagination via `next_page_offset` cursor with `prev_offsets` history stack.
   - Drill-in `[P]` from Collections screen; Esc returns to Collections.
   - Added `selected_index()` + `collection_names()` accessors on `CollectionBrowserScreen`.
+- **Configuration Screen (2026-07-23)**: new screen `src/tui/config_screen.rs` for editing the four config fields (qdrant_url, embedding_url, default_collection, embedding_model) with per-field edit buffer, dirty marker, save/discard semantics, and reload-from-disk on entry.
+  - `ConfigKeyOutcome { Handled, Ignore, Back }` returned from `handle_key` so the App can wire Esc -> discard + return home.
+  - Config gains `PartialEq` so dirty tracking can compare the working copy against the last-saved snapshot.
+  - App gains `ActiveScreen::Config` variant + key wiring; Home key `g` opens config; status bar hints updated.
+  - 12 unit tests covering navigation, edit/commit/cancel, dirty round-trip, default_collection None/Some, save/discard.
 
 ## In Progress
 - No active task
@@ -26,6 +31,5 @@
 - (Phase 3) Create / delete collections from the TUI
 - (Phase 3) Upsert points (paste or load from file)
 - (Phase 3) Delete points by filter or ID
-- (Phase 3) Configuration screen (edit Qdrant URL, embedding URL from TUI)
 
 See `roadmap.md` for the full build order.
