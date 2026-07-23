@@ -1060,10 +1060,7 @@ mod tests {
     async fn test_rename_default_collection_no_default_is_noop() {
         let server = mockito::Server::new_async().await;
         let client = QdrantClient::new(server.url());
-        let outcome = client
-            .rename_default_collection(None, None)
-            .await
-            .unwrap();
+        let outcome = client.rename_default_collection(None, None).await.unwrap();
         assert_eq!(outcome, RenameOutcome::NoDefault);
     }
 }

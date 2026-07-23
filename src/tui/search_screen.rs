@@ -108,8 +108,7 @@ impl SearchScreen {
             }
             SearchState::Searching if !self.pending_vector.is_empty() => {
                 if self.collection.is_empty() {
-                    self.search_state =
-                        SearchState::Error("no collection selected".to_string());
+                    self.search_state = SearchState::Error("no collection selected".to_string());
                     return;
                 }
                 let vector = self.pending_vector.clone();
