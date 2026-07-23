@@ -24,7 +24,7 @@
   - App gains `ActiveScreen::Config` variant + key wiring; Home key `g` opens config; status bar hints updated.
   - 12 unit tests covering navigation, edit/commit/cancel, dirty round-trip, default_collection None/Some, save/discard.
 - **Config -> Clients wiring (2026-07-23)**: `App::with_config(&Config)` constructor builds `QdrantClient` and `EmbeddingClient` from `cfg.qdrant_url` / `cfg.embedding_url`. `main.rs` now calls it with the loaded config instead of discarding into `_`. Edits saved through the config screen take effect on next launch.
-- **Config input bug fix (2026-07-23)**: typing `q` or `Ctrl+C` while editing a config field used to quit the app because the global quit handler ran before per-screen dispatch. `App::handle_key_press` now skips the `q`/`Ctrl+C` block when the active screen is `ConfigScreen` and `is_editing()` is true; the keystroke falls through and enters the edit buffer. 4 new tests (3 App-level + 1 screen).
+- **Config input bug fix (2026-07-23)**: typing `q` or `Ctrl+C` while editing a config field used to quit the app because the global quit handler ran before per-screen dispatch. `App::handle_key_press` now skips the `q`/`Ctrl+C` block when the active screen has `is_text_editing()` true. Generalized to `SearchScreen` (query input is always focused). 7 new tests (4 original Config + 3 Search regression).
 
 ## In Progress
 - No active task
