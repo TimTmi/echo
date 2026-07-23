@@ -8,6 +8,7 @@ pub mod config_screen;
 pub mod point_viewer;
 pub mod search_screen;
 
+use crate::config::Config;
 use crate::embedding::EmbeddingClient;
 use crate::qdrant::QdrantClient;
 use anyhow::Context;
@@ -88,6 +89,25 @@ impl App {
     /// Create a new App with default state.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create an App whose Qdrant and embedding clients point at the URLs
+    /// in `config`. The same `Config` is also given to the config screen as
+    /// its initial working copy (it is reloaded from disk on screen entry).
+    pub fn with_config(config: &Config) -> Self {
+        Self {
+            should_quit: false,
+            started_at: Instant::now(),
+            error_message: None,
+            active_screen: ActiveScreen::default(),
+            qdrant_client: QdrantClient::new(&config.qdrant_url),
+            embedding_client: EmbeddingClient::new(&config.embedding_url),
+            collection_browser: CollectionBrowserScreen::new(),
+            search_screen: SearchScreen::new(),
+            point_viewer: PointViewerScreen::new(),
+            config_screen: ConfigScreen::new(config.clone()),
+            runtime_handle: None,
+        }
     }
 
     /// Set the Qdrant client (used for configuring with a different URL).

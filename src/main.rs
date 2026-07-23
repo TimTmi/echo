@@ -9,10 +9,11 @@ fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    // Load config (not yet used in the basic loop, will be wired in later tasks)
-    let _config = echo::config::Config::load()?;
+    // Load config from disk and hand it to the App so Qdrant / embedding
+    // clients point at the saved URLs.
+    let config = echo::config::Config::load()?;
 
     // Run the TUI
-    let mut app = App::new();
+    let mut app = App::with_config(&config);
     app.run()
 }
