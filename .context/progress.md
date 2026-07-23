@@ -32,8 +32,10 @@
 - **Config input bug fix (2026-07-23)**: typing `q` or `Ctrl+C` while editing a config field used to quit the app because the global quit handler ran before per-screen dispatch. `App::handle_key_press` now skips the `q`/`Ctrl+C` block when the active screen has `is_text_editing()` true. Generalized to `SearchScreen` (query input is always focused). 7 new tests (4 original Config + 3 Search regression).
 - **Status-bar visibility fix (2026-07-24)**: `App::render` reserved `Length(1)` for the global status bar slot, but `render_status_bar` wraps its `Paragraph` in a `Block::default().borders(Borders::TOP)` — so the top border ate the only row, leaving the inner paragraph area at 0 height and the hint text clipped to nothing. User reported seeing only the horizontal line. Promoted the panel to a full rounded block (Borders::ALL + BorderType::Rounded with title " Keys ", Left align) to match every other panel in the UI. Bumped the slot from Length(1) -> Length(3) so the all-sides border (top + text + bottom) fits. All 79 tests still pass.
 
-## Completed
 - **Cross-collection search (2026-07-24)**: Implemented Option A per `decisions.md`. When `SearchScreen.collection` is empty (no desktop default and no selection context), entering a query triggers a fan-out: lists all Qdrant collections, filters to those with compatible vector config (1024-D Cosine), runs `search_points(5)` on each, merges results sorted by score desc, caps at top 20. Each result shows a green `[collection_name]` tag. Status bar and input title reflect cross-collection mode. 79 tests all pass.
+
+## In Progress
+- None
 
 ## Next Steps
 - (Phase 3) Upsert points (paste or load from file)
