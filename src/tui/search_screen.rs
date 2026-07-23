@@ -73,6 +73,13 @@ impl SearchScreen {
         &self.query
     }
 
+    /// Read-only view of the collection name scoped to the next search.
+    /// Empty if no collection has been set (e.g. entered Search from Home
+    /// without a configured default).
+    pub fn collection(&self) -> &str {
+        &self.collection
+    }
+
     pub fn on_enter(&mut self) {
         self.results.clear();
         self.search_state = SearchState::Idle;
@@ -100,6 +107,11 @@ impl SearchScreen {
                 }
             }
             SearchState::Searching if !self.pending_vector.is_empty() => {
+                if self.collection.is_empty() {
+                    self.search_state =
+                        SearchState::Error("no collection selected".to_string());
+                    return;
+                }
                 let vector = self.pending_vector.clone();
                 let collection = self.collection.clone();
                 let result = handle.block_on(client.search_points(&collection, &vector, 10));

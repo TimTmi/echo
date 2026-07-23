@@ -419,6 +419,19 @@ impl App {
                     }
                     return true;
                 }
+                // 'S' opens the search screen scoped to the selected collection.
+                if matches!(code, KeyCode::Char('s') | KeyCode::Char('S')) {
+                    if let Some(idx) = self.collection_browser.selected_index() {
+                        let names = self.collection_browser.collection_names();
+                        if let Some(name) = names.get(idx) {
+                            self.search_screen.set_collection(name);
+                            self.active_screen = ActiveScreen::Search;
+                            self.on_screen_enter();
+                            return true;
+                        }
+                    }
+                    return true;
+                }
                 // Esc on collections screen goes back to home
                 if code == KeyCode::Esc {
                     self.active_screen = ActiveScreen::Home;
@@ -475,6 +488,18 @@ impl App {
                 true
             }
             KeyCode::Char('s') | KeyCode::Char('S') => {
+                // From home, fall back to the configured default collection
+                // (if any) so Search has a target. The Search screen refuses to
+                // run with an empty collection name.
+                if let Some(default) = self
+                    .config_screen
+                    .config()
+                    .default_collection
+                    .as_ref()
+                    .filter(|s| !s.is_empty())
+                {
+                    self.search_screen.set_collection(default);
+                }
                 self.active_screen = ActiveScreen::Search;
                 self.on_screen_enter();
                 true
@@ -565,5 +590,34 @@ mod tests {
         // active_screen is Home by default.
         assert!(app.handle_key_press(KeyCode::Char('q'), KeyModifiers::NONE));
         assert!(app.should_quit);
+    }
+
+    /// Pressing 's' from Home with a configured default_collection forwards
+    /// that name to the Search screen so the next search has a target.
+    #[test]
+    fn home_s_with_default_collection_passes_name_to_search() {
+        let mut app = App::new();
+        app.config_screen = ConfigScreen::new(crate::config::Config {
+            qdrant_url: "http://q".into(),
+            embedding_url: "http://e/v1/embeddings".into(),
+            default_collection: Some("general".into()),
+            embedding_model: "BGE-M3".into(),
+        });
+
+        assert!(app.handle_key_press(KeyCode::Char('s'), KeyModifiers::NONE));
+        assert_eq!(app.active_screen, ActiveScreen::Search);
+        assert_eq!(app.search_screen.collection(), "general");
+    }
+
+    /// Pressing 's' from Home with no default_collection leaves the search
+    /// target empty; the Search screen will refuse to run and show a clear
+    /// error instead of forming a malformed URL.
+    #[test]
+    fn home_s_without_default_collection_leaves_search_target_empty() {
+        let mut app = App::new();
+        // Config::default has default_collection: None.
+        assert!(app.handle_key_press(KeyCode::Char('s'), KeyModifiers::NONE));
+        assert_eq!(app.active_screen, ActiveScreen::Search);
+        assert!(app.search_screen.collection().is_empty());
     }
 }

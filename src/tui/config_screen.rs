@@ -87,6 +87,13 @@ impl ConfigScreen {
         self.dirty
     }
 
+    /// Read-only access to the working config (latest edits, not yet saved).
+    /// Used by `App` for read-only fallbacks like picking the default
+    /// collection to open the Search screen with.
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
     /// Whether the screen is currently consuming text input. Used by `App` to
     /// decide whether global quit keys (`q`, `Ctrl+C`) should fire while a
     /// user is typing in a field.
