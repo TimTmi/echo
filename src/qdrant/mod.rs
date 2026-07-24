@@ -268,6 +268,75 @@ impl QdrantClient {
         })
     }
 
+    /// Upsert points into a collection.
+    ///
+    /// Calls `PUT /collections/{name}/points` with a batch of points.
+    /// Each point carries an ID (string), a vector, and an optional payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or Qdrant rejects it.
+    pub async fn upsert_points(&self, collection: &str, points: &[UpsertPoint]) -> anyhow::Result<()> {
+        let url = format!("{}/collections/{collection}/points", self.base_url);
+        let batch: Vec<serde_json::Value> = points
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "id": p.id,
+                    "vector": p.vector,
+                    "payload": p.payload,
+                })
+            })
+            .collect();
+        let body = serde_json::json!({ "points": batch });
+
+        let response = self
+            .client
+            .put(&url)
+            .json(&body)
+            .send()
+            .await
+            .context("failed to send upsert points request")?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body_text = response.text().await.unwrap_or_default();
+            anyhow::bail!("upsert points failed with status {status}: {body_text}");
+        }
+        Ok(())
+    }
+
+    /// Delete points from a collection by ID.
+    ///
+    /// Calls `POST /collections/{name}/points/delete` with a list of point IDs.
+    /// A 404 or empty result is treated as success (nothing to delete).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for other non-OK statuses or transport failures.
+    pub async fn delete_points(&self, collection: &str, ids: &[serde_json::Value]) -> anyhow::Result<()> {
+        let url = format!("{}/collections/{collection}/points/delete", self.base_url);
+        let body = serde_json::json!({
+            "points": ids,
+        });
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .context("failed to send delete points request")?;
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+        if !status.is_success() {
+            let body_text = response.text().await.unwrap_or_default();
+            anyhow::bail!("delete points failed with status {status}: {body_text}");
+        }
+        Ok(())
+    }
+
     /// Check whether a collection with the given name exists on Qdrant.
     /// Returns `false` for both "not found" and any network error -- callers
     /// treat "I don't know" the same as "no" for ensure-default purposes.
@@ -408,6 +477,14 @@ pub struct SearchResult {
     pub score: Option<f64>,
     pub payload: Option<serde_json::Map<String, serde_json::Value>>,
     pub vector: Option<Vec<f64>>,
+}
+
+/// A point to upsert into a Qdrant collection.
+#[derive(Debug, Clone)]
+pub struct UpsertPoint {
+    pub id: String,
+    pub vector: Vec<f32>,
+    pub payload: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1062,5 +1139,84 @@ mod tests {
         let client = QdrantClient::new(server.url());
         let outcome = client.rename_default_collection(None, None).await.unwrap();
         assert_eq!(outcome, RenameOutcome::NoDefault);
+    }
+
+    // -- upsert_points tests ------------------------------------------------
+
+    #[tokio::test]
+    async fn test_upsert_points_success() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("PUT", "/collections/docs/points")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({"result": {"operation_id": 1, "status": "completed"}, "status": "ok"}).to_string())
+            .expect(1)
+            .create();
+
+        let client = QdrantClient::new(server.url());
+        let points = vec![UpsertPoint {
+            id: "p1".to_string(),
+            vector: vec![0.1, 0.2, 0.3],
+            payload: Some(serde_json::Map::new()),
+        }];
+        client.upsert_points("docs", &points).await.unwrap();
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_upsert_points_error() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("PUT", "/collections/docs/points")
+            .with_status(400)
+            .with_header("content-type", "application/json")
+            .with_body(json!({"status": {"error": "bad request"}}).to_string())
+            .create();
+
+        let client = QdrantClient::new(server.url());
+        let points = vec![UpsertPoint {
+            id: "p1".to_string(),
+            vector: vec![0.1; 1024],
+            payload: None,
+        }];
+        let err = client.upsert_points("docs", &points).await.unwrap_err();
+        assert!(err.to_string().contains("400"), "expected 400 error, got: {err}");
+    }
+
+    // -- delete_points tests ------------------------------------------------
+
+    #[tokio::test]
+    async fn test_delete_points_success() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/collections/docs/points/delete")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({"result": {"status": "completed"}, "status": "ok"}).to_string())
+            .expect(1)
+            .create();
+
+        let client = QdrantClient::new(server.url());
+        let ids = vec![serde_json::json!("p1"), serde_json::json!("p2")];
+        client.delete_points("docs", &ids).await.unwrap();
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_delete_points_404_treated_as_success() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/collections/docs/points/delete")
+            .with_status(404)
+            .with_header("content-type", "application/json")
+            .with_body("{}")
+            .expect(1)
+            .create();
+
+        let client = QdrantClient::new(server.url());
+        let ids = vec![serde_json::json!("nonexistent")];
+        client.delete_points("docs", &ids).await.unwrap();
+        mock.assert();
     }
 }

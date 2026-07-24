@@ -14,8 +14,8 @@
 
 ## Phase 3: Enhanced Interaction
 - [x] Create / delete collections from the TUI
-- [ ] Upsert points (paste or load from file)
-- [ ] Delete points by filter or ID
+- [x] Upsert points (paste or load from file)
+- [x] Delete points by filter or ID
 - [x] Configuration screen (edit Qdrant URL, embedding URL from TUI)
 
 ## Phase 4: Polish & Extensibility

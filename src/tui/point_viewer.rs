@@ -111,6 +111,24 @@ impl PointViewerScreen {
         self.points.get(idx)
     }
 
+    /// Get the ID of the currently selected point, if any.
+    pub fn selected_point_id(&self) -> Option<serde_json::Value> {
+        let idx = self.list_state.selected()?;
+        self.points.get(idx).map(|p| p.id.clone())
+    }
+
+    /// Read-only view of the target collection name.
+    pub fn collection(&self) -> &str {
+        &self.collection
+    }
+
+    /// Force-refresh the point list (used by App after a delete).
+    pub fn _trigger_refresh(&mut self) {
+        if !self.collection.is_empty() {
+            self.reset_to_first_page();
+        }
+    }
+
     pub fn handle_key(&mut self, code: KeyCode) -> bool {
         if self.load_state == LoadState::Loading {
             return !matches!(code, KeyCode::Esc);

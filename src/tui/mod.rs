@@ -5,6 +5,7 @@
 
 pub mod collection_browser;
 pub mod config_screen;
+pub mod ingestion_screen;
 pub mod point_viewer;
 pub mod search_screen;
 
@@ -41,6 +42,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+use ingestion_screen::IngestionScreen;
 use point_viewer::PointViewerScreen;
 use ratatui::Terminal;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -61,6 +63,7 @@ enum ActiveScreen {
     Search,
     PointViewer,
     Config,
+    Ingestion,
 }
 
 /// Application state for the TUI.
@@ -85,6 +88,8 @@ pub struct App {
     point_viewer: PointViewerScreen,
     /// Configuration screen state.
     config_screen: ConfigScreen,
+    /// Ingestion screen state.
+    ingestion_screen: IngestionScreen,
     /// Most-recently-persisted default_collection name. After every key event
     /// on the Config screen we diff against this to detect a save and trigger
     /// the rename logic on Qdrant.
@@ -106,6 +111,7 @@ impl Default for App {
             search_screen: SearchScreen::new(),
             point_viewer: PointViewerScreen::new(),
             config_screen: ConfigScreen::new(crate::config::Config::default()),
+            ingestion_screen: IngestionScreen::new(),
             prev_persisted_default: None,
             runtime_handle: None,
         }
@@ -133,6 +139,13 @@ impl App {
             search_screen: SearchScreen::new(),
             point_viewer: PointViewerScreen::new(),
             config_screen: ConfigScreen::new(config.clone()),
+            ingestion_screen: {
+                let mut s = IngestionScreen::new();
+                if let Some(ref d) = config.default_collection {
+                    s.set_default_collection(d);
+                }
+                s
+            },
             prev_persisted_default: config.default_collection.clone(),
             runtime_handle: None,
         }
@@ -270,6 +283,9 @@ impl App {
             ActiveScreen::Config => {
                 self.config_screen.on_enter();
             }
+            ActiveScreen::Ingestion => {
+                self.ingestion_screen.on_enter();
+            }
             ActiveScreen::Home => {}
         }
     }
@@ -296,6 +312,12 @@ impl App {
             ActiveScreen::Config => {
                 self.config_screen.tick();
             }
+            ActiveScreen::Ingestion => {
+                if let Some(handle) = &self.runtime_handle {
+                    self.ingestion_screen
+                        .tick(&self.qdrant_client, &self.embedding_client, handle);
+                }
+            }
             ActiveScreen::Home => {}
         }
     }
@@ -316,6 +338,7 @@ impl App {
             ActiveScreen::Search => self.search_screen.render(frame, layout[1]),
             ActiveScreen::PointViewer => self.point_viewer.render(frame, layout[1]),
             ActiveScreen::Config => self.config_screen.render(frame, layout[1]),
+            ActiveScreen::Ingestion => self.ingestion_screen.render(frame, layout[1]),
         }
         self.render_status_bar(frame, layout[2]);
     }
@@ -395,7 +418,7 @@ impl App {
     /// Render the status bar at the bottom.
     fn render_status_bar(&self, frame: &mut ratatui::Frame, area: Rect) {
         let hints = match self.active_screen {
-            ActiveScreen::Home => " [Q] Quit | [C] Collections | [S] Search | [G] Config ",
+            ActiveScreen::Home => " [Q] Quit | [C] Collections | [S] Search | [I] Ingest | [G] Config ",
             ActiveScreen::Collections => {
                 " [Q] Quit | [↑/↓] Navigate | [R] Refresh │ [N] New │ [D] Delete │ [Enter] Points │ [S] Search │ [Esc] Back "
             }
@@ -403,10 +426,13 @@ impl App {
                 " [Q] Quit | Type query + Enter to search | [Esc] Back "
             }
             ActiveScreen::PointViewer => {
-                " [Q]uit | [↑/↓] Navigate | [N] Next page | [P] Prev | [R] Refresh | [Esc] Back "
+                " [Q]uit | [↑/↓] Navigate | [N] Next page | [P] Prev | [R] Refresh | [D]elete | [Esc] Back "
             }
             ActiveScreen::Config => {
                 " [Q] Quit | [↑/↓] Select | [Enter] Edit | [s] Save | [d] Discard | [Esc] Back "
+            }
+            ActiveScreen::Ingestion => {
+                " [t]ext [f]ile [u]rl | Enter to process | [y] upsert | [n] discard | [Esc] Back "
             }
         };
 
@@ -462,6 +488,7 @@ impl App {
             ActiveScreen::Config => self.config_screen.is_text_editing(),
             ActiveScreen::Search => self.search_screen.is_text_editing(),
             ActiveScreen::Collections => self.collection_browser.is_text_editing(),
+            ActiveScreen::Ingestion => self.ingestion_screen.is_text_editing(),
             _ => false,
         };
 
@@ -540,6 +567,28 @@ impl App {
                 if handled {
                     return true;
                 }
+                // 'd' on point viewer deletes the selected point.
+                if matches!(code, KeyCode::Char('d') | KeyCode::Char('D')) {
+                    if let (Some(point_id), Some(handle)) = (
+                        self.point_viewer.selected_point_id(),
+                        self.runtime_handle.as_ref(),
+                    ) {
+                        let collection = self.point_viewer.collection().to_string();
+                        if !collection.is_empty() {
+                            let result = handle.block_on(
+                                self.qdrant_client.delete_points(&collection, &[point_id]),
+                            );
+                            match result {
+                                Ok(()) => self.point_viewer._trigger_refresh(),
+                                Err(e) => {
+                                    self.error_message =
+                                        Some(format!("Delete failed: {e:#}"));
+                                }
+                            }
+                        }
+                    }
+                    return true;
+                }
                 // Esc on point viewer returns to collections
                 if code == KeyCode::Esc {
                     self.active_screen = ActiveScreen::Collections;
@@ -561,6 +610,18 @@ impl App {
                     }
                     ConfigKeyOutcome::Ignore => false,
                 }
+            }
+            ActiveScreen::Ingestion => {
+                let handled = self.ingestion_screen.handle_key(code);
+                if handled {
+                    return true;
+                }
+                if code == KeyCode::Esc {
+                    self.active_screen = ActiveScreen::Home;
+                    self.on_screen_enter();
+                    return true;
+                }
+                false
             }
         }
     }
@@ -592,6 +653,21 @@ impl App {
             }
             KeyCode::Char('g') | KeyCode::Char('G') => {
                 self.active_screen = ActiveScreen::Config;
+                self.on_screen_enter();
+                true
+            }
+            KeyCode::Char('i') | KeyCode::Char('I') => {
+                // Set default collection from config so the ingestion screen
+                // starts with a sensible target.
+                let default_collection = self
+                    .config_screen
+                    .config()
+                    .default_collection
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_string();
+                self.ingestion_screen.set_default_collection(&default_collection);
+                self.active_screen = ActiveScreen::Ingestion;
                 self.on_screen_enter();
                 true
             }

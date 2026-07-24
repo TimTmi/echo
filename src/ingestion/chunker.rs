@@ -103,7 +103,7 @@ fn apply_overlap(mut chunks: Vec<String>, overlap: usize) -> Vec<String> {
 
 /// Token count estimation: ~4 chars per token for English.
 pub fn estimate_token_count(text: &str) -> usize {
-    (text.len() + 3) / 4
+    text.len().div_ceil(4)
 }
 
 #[cfg(test)]

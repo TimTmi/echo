@@ -457,7 +457,7 @@ impl Extractor for AudioVideoExtractor {
             .arg(&wav_path)
             .arg("-otxt")   // output as plain text
             .arg("-of")
-            .arg(&wav_path.with_extension("")) // output file prefix (wav_path without .wav)
+            .arg(wav_path.with_extension("")) // output file prefix (wav_path without .wav)
             .output()
             .context(format!("failed to run whisper CLI '{cli}'"))?;
 

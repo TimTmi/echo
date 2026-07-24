@@ -44,12 +44,16 @@
   - Works standalone with `cargo test --lib ingestion`.
   - Crate deps added: `docx-rs`, `html2text`, `text-splitter`, `tiktoken-rs`, `unicode-normalization`, `regex`, `async-trait`. Native binding crates (`leptess`, `whisper-rs`) avoided in favor of subprocess calls to eliminate Windows vcpkg/clang build deps.
 
+- **Ingestion TUI screen (2026-07-24)**: New `src/tui/ingestion_screen.rs` module: text/file/URL input modes, configurable chunk size/overlap/mode, extraction progress, chunk preview with y/n upsert/discard, sequential embed+upsert with per-chunk progress. `ActiveScreen::Ingestion` variant with Home key `i`, status bar hints, `Esc` back. Default target collection from config. 14 unit tests.
+- **Qdrant `upsert_points` + `delete_points` (2026-07-24)**: Added `UpsertPoint` struct, `upsert_points(collection, &[UpsertPoint])` (`PUT /collections/{name}/points`) and `delete_points(collection, &[Value])` (`POST /collections/{name}/points/delete`) to `QdrantClient`. 4 new tests (success + error for upsert; success + 404-as-success for delete).
+- **Delete points from PointViewer (2026-07-24)**: `d` key on PointViewer deletes the selected point via `QdrantClient::delete_points`. Added `selected_point_id()`, `collection()`, `_trigger_refresh()` accessors. Point list auto-refreshes after deletion. Status bar updated with `[D]elete` hint.
+
 ## In Progress
 - None
 
 ## Next Steps
-- (Phase 3) Wire ingestion pipeline into TUI (paste or load from file)
-- (Phase 3) Delete points by filter or ID
-- (Phase 3) Upsert extracted chunks into Qdrant
+- (Phase 4) Multiple embedding providers (Ollama, OpenAI API-compatible)
+- (Phase 4) Search history / recent searches
+- (Phase 4) Payload filtering UI
 
 See `roadmap.md` for the full build order.
