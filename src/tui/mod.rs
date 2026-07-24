@@ -395,22 +395,22 @@ impl App {
     /// Render the status bar at the bottom.
     fn render_status_bar(&self, frame: &mut ratatui::Frame, area: Rect) {
         let hints = match self.active_screen {
-            ActiveScreen::Home => " [Q]uit | [C]ollections | [S]earch | [G]onfig ",
+            ActiveScreen::Home => " [Q] Quit | [C] Collections | [S] Search | [G] Config ",
             ActiveScreen::Collections => {
-                " [Q]uit | [↑/↓] Navigate | [Enter/R] Refresh │ [N] New │ [D] Delete │ [P]oints │ [S]earch │ [Esc] Back "
+                " [Q] Quit | [↑/↓] Navigate | [R] Refresh │ [N] New │ [D] Delete │ [Enter] Points │ [S] Search │ [Esc] Back "
             }
             ActiveScreen::Search => {
                 if self.search_screen.collection().is_empty() {
-                    " [Q]uit | Cross-collection search (ALL collections) | Type query + Enter | [Esc] Back "
+                    " [Q] Quit | Cross-collection search (ALL collections) | Type query + Enter | [Esc] Back "
                 } else {
-                    " [Q]uit | Type query + Enter to search | [Esc] Back "
+                    " [Q] Quit | Type query + Enter to search | [Esc] Back "
                 }
             }
             ActiveScreen::PointViewer => {
-                " [Q]uit | [↑/↓] Navigate | [N]ext page | [P]rev | [R]efresh | [Esc] Back "
+                " [Q]uit | [↑/↓] Navigate | [N] Next page | [P] Prev | [R] Refresh | [Esc] Back "
             }
             ActiveScreen::Config => {
-                " [Q]uit | [↑/↓] select | [Enter] edit | [s] save | [d] discard | [Esc] back "
+                " [Q] Quit | [↑/↓] Select | [Enter] Edit | [s] Save | [d] Discard | [Esc] Back "
             }
         };
 
@@ -492,8 +492,8 @@ impl App {
                 if handled {
                     return true;
                 }
-                // 'P' drills into the selected collection's points.
-                if matches!(code, KeyCode::Char('p') | KeyCode::Char('P')) {
+                // 'Enter' / 'P' drills into the selected collection's points.
+                if matches!(code, KeyCode::Enter) {
                     if let Some(idx) = self.collection_browser.selected_index() {
                         let names = self.collection_browser.collection_names();
                         if let Some(name) = names.get(idx) {

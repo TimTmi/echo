@@ -360,7 +360,7 @@ impl CollectionBrowserScreen {
                 }
                 true
             }
-            KeyCode::Enter | KeyCode::Char('r') | KeyCode::Char('R') => {
+            KeyCode::Char('r') | KeyCode::Char('R') => {
                 let selected = self.list_state.selected();
                 if let Some(idx) = selected
                     && idx < self.collection_names.len()
