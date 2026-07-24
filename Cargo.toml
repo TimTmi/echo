@@ -31,5 +31,20 @@ qdrant-client = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Extraction
+docx-rs = "0.4"
+html2text = "0.17"
+
+# Chunking
+text-splitter = "0.32"
+tiktoken-rs = "0.12"
+
+# Cleaning
+unicode-normalization = "0.1"
+regex = "1"
+
+# Async trait support
+async-trait = "0.1"
+
 [dev-dependencies]
 mockito = "1"

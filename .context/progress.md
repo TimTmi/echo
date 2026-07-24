@@ -34,11 +34,22 @@
 
 - **Cross-collection search removed (2026-07-24)**: Feature scrapped per decision. Reverted `SearchScreen` to single-collection search only. `CrossSearching` state, `cross_search` field, fan-out logic removed from `src/tui/search_screen.rs`. `source_collection` field removed from `SearchResult` in `src/qdrant/mod.rs`. Status bar simplified.
 
+- **Extract → Clean → Chunk ingestion pipeline (2026-07-24)**: New `src/ingestion/` module implementing the full document ingestion pipeline. Three sub-modules:
+  - **`extractor.rs`**: `Extractor` trait + dispatcher by MIME/extension. Implementations: plaintext/Markdown (direct read), PDF (`pdftotext` subprocess), DOCX (`docx-rs`), HTML (`reqwest` + `html2text`), images (`tesseract` subprocess), audio/video (`ffmpeg` + `whisper.cpp` subprocess). All subprocess-based extractors check for tool presence and give clear error messages when missing.
+  - **`cleaner.rs`**: Unicode NFC normalization, de-hyphenation (`-\n` artifacts), whitespace collapse, newline collapse, optional header/footer strip via `detect_repeated_lines`.
+  - **`chunker.rs`**: Configurable chunk size/overlap/mode (`StructureAware` via `text-splitter`, `SlidingWindow` via character-based fixed-size). Token count estimation.
+  - **`mod.rs`**: Top-level `process(input, config)` function runs extract → clean → chunk → metadata attachment + dedup. URL auto-fetching with `reqwest`. Content-type refinement by file extension fallback.
+  - **34 new unit tests** (5 mod integration, 11 extractor/dispatcher, 10 cleaner, 8 chunker). All 113 project tests pass.
+  - Public types: `Input`, `Source`, `Chunk`, `ChunkMetadata`, `ChunkConfig`, `ChunkMode`.
+  - Works standalone with `cargo test --lib ingestion`.
+  - Crate deps added: `docx-rs`, `html2text`, `text-splitter`, `tiktoken-rs`, `unicode-normalization`, `regex`, `async-trait`. Native binding crates (`leptess`, `whisper-rs`) avoided in favor of subprocess calls to eliminate Windows vcpkg/clang build deps.
+
 ## In Progress
 - None
 
 ## Next Steps
-- (Phase 3) Upsert points (paste or load from file)
+- (Phase 3) Wire ingestion pipeline into TUI (paste or load from file)
 - (Phase 3) Delete points by filter or ID
+- (Phase 3) Upsert extracted chunks into Qdrant
 
 See `roadmap.md` for the full build order.
