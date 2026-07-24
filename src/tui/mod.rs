@@ -400,11 +400,7 @@ impl App {
                 " [Q] Quit | [↑/↓] Navigate | [R] Refresh │ [N] New │ [D] Delete │ [Enter] Points │ [S] Search │ [Esc] Back "
             }
             ActiveScreen::Search => {
-                if self.search_screen.collection().is_empty() {
-                    " [Q] Quit | Cross-collection search (ALL collections) | Type query + Enter | [Esc] Back "
-                } else {
-                    " [Q] Quit | Type query + Enter to search | [Esc] Back "
-                }
+                " [Q] Quit | Type query + Enter to search | [Esc] Back "
             }
             ActiveScreen::PointViewer => {
                 " [Q]uit | [↑/↓] Navigate | [N] Next page | [P] Prev | [R] Refresh | [Esc] Back "

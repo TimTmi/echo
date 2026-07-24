@@ -19,9 +19,6 @@ enum SearchState {
     Idle,
     GeneratingEmbedding,
     Searching,
-    /// Fanning out the same embedding vector to all collections
-    /// on Qdrant for cross-collection search.
-    CrossSearching,
     Done,
     Error(String),
 }
@@ -32,9 +29,6 @@ pub struct SearchScreen {
     cursor: usize,
     input_focused: bool,
     collection: String,
-    /// When true, the collection field is empty and we fan out to all
-    /// Qdrant collections as a cross-collection search.
-    cross_search: bool,
     results: Vec<SearchResult>,
     search_state: SearchState,
     pending_query: String,
@@ -54,7 +48,6 @@ impl SearchScreen {
             cursor: 0,
             input_focused: true,
             collection: String::new(),
-            cross_search: false,
             results: Vec::new(),
             search_state: SearchState::Idle,
             pending_query: String::new(),
@@ -64,7 +57,6 @@ impl SearchScreen {
 
     pub fn set_collection(&mut self, name: &str) {
         self.collection = name.to_string();
-        self.cross_search = name.is_empty();
     }
 
     /// Whether the screen is currently consuming text input. The search
@@ -92,8 +84,6 @@ impl SearchScreen {
         self.results.clear();
         self.search_state = SearchState::Idle;
         self.input_focused = true;
-        // If collection is empty, we're in cross-collection mode.
-        self.cross_search = self.collection.is_empty();
     }
 
     pub fn tick(
@@ -117,11 +107,6 @@ impl SearchScreen {
                 }
             }
             SearchState::Searching if !self.pending_vector.is_empty() => {
-                if self.cross_search {
-                    // Fan out to all collections
-                    self.search_state = SearchState::CrossSearching;
-                    return;
-                }
                 if self.collection.is_empty() {
                     self.search_state = SearchState::Error("no collection selected".to_string());
                     return;
@@ -138,72 +123,6 @@ impl SearchScreen {
                         self.search_state = SearchState::Error(format!("Search failed: {e:#}"));
                     }
                 }
-            }
-            SearchState::CrossSearching if !self.pending_vector.is_empty() => {
-                let vector = self.pending_vector.clone();
-                // Fetch all collection names, filter by matching vector config
-                let all_names = match handle.block_on(client.list_collections()) {
-                    Ok(names) => names,
-                    Err(e) => {
-                        self.search_state =
-                            SearchState::Error(format!("Cross-search: list failed: {e:#}"));
-                        return;
-                    }
-                };
-                // Filter to collections compatible with BGE-M3 (1024-Cosine).
-                // Also skip collections that error on info fetch (maybe gone).
-                let target_collections: Vec<String> = all_names
-                    .into_iter()
-                    .filter(|name| {
-                        match handle.block_on(client.get_collection_info(name)) {
-                            Ok(info) => {
-                                info.vector_size == 1024 && info.distance == "Cosine"
-                            }
-                            Err(_) => {
-                                // Skip collections we can't inspect
-                                false
-                            }
-                        }
-                    })
-                    .collect();
-
-                if target_collections.is_empty() {
-                    self.search_state = SearchState::Error(
-                        "No compatible collections found for cross-search.".to_string(),
-                    );
-                    return;
-                }
-
-                // Search each compatible collection (up to 5 results each, merged)
-                let per_limit = 5;
-                let mut merged: Vec<SearchResult> = Vec::new();
-                for coll_name in &target_collections {
-                    match handle.block_on(client.search_points(coll_name, &vector, per_limit)) {
-                        Ok(mut coll_results) => {
-                            // Tag each result with its source collection name
-                            for r in &mut coll_results {
-                                r.source_collection = Some(coll_name.clone());
-                            }
-                            merged.append(&mut coll_results);
-                        }
-                        Err(e) => {
-                            // Log per-collection error but keep going
-                            tracing::warn!("Cross-search failed on '{coll_name}': {e:#}");
-                        }
-                    }
-                }
-
-                // Sort descending by score, None scores go last
-                merged.sort_by(|a, b| {
-                    b.score
-                        .partial_cmp(&a.score)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
-
-                // Keep top 20 overall
-                merged.truncate(20);
-                self.results = merged;
-                self.search_state = SearchState::Done;
             }
             _ => {}
         }
@@ -289,9 +208,7 @@ impl SearchScreen {
             Span::raw(&self.query)
         };
 
-        let collection_label = if self.cross_search {
-            "all collections".to_string()
-        } else if self.collection.is_empty() {
+        let collection_label = if self.collection.is_empty() {
             "no collection".to_string()
         } else {
             self.collection.clone()
@@ -315,9 +232,7 @@ impl SearchScreen {
     fn render_status(&self, frame: &mut ratatui::Frame, area: Rect) {
         let status = match &self.search_state {
             SearchState::Idle => {
-                if self.cross_search {
-                    " Cross-collection search — query searches ALL collections. ".to_string()
-                } else if self.results.is_empty() {
+                if self.results.is_empty() {
                     String::new()
                 } else {
                     format!(
@@ -327,14 +242,7 @@ impl SearchScreen {
                 }
             }
             SearchState::GeneratingEmbedding => " Generating embedding... ".to_string(),
-            SearchState::Searching => {
-                if self.cross_search {
-                    " Searching all compatible collections... ".to_string()
-                } else {
-                    " Searching Qdrant... ".to_string()
-                }
-            }
-            SearchState::CrossSearching => " Searching all compatible collections... ".to_string(),
+            SearchState::Searching => " Searching Qdrant... ".to_string(),
             SearchState::Done => format!(" Search complete. {} results.", self.results.len()),
             SearchState::Error(e) => format!(" Error: {e} "),
         };
@@ -370,7 +278,6 @@ impl SearchScreen {
             return;
         }
 
-        let is_cross = self.cross_search;
         let items: Vec<ListItem> = self
             .results
             .iter()
@@ -392,24 +299,9 @@ impl SearchScreen {
                     })
                     .unwrap_or_default();
 
-                // Build source tag for cross-collection results
-                let source_tag = if is_cross {
-                    if let Some(ref src) = r.source_collection {
-                        Span::styled(
-                            format!("[{}] ", src),
-                            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-                        )
-                    } else {
-                        Span::raw("")
-                    }
-                } else {
-                    Span::raw("")
-                };
-
                 let content = vec![
                     Line::from(vec![
                         Span::styled(format!("#{}  ", i), Style::default().fg(Color::DarkGray)),
-                        source_tag,
                         Span::styled(
                             format!("Score: {:.4}", score),
                             Style::default()
@@ -431,11 +323,7 @@ impl SearchScreen {
             })
             .collect();
 
-        let title = if is_cross {
-            " Cross-Collection Results "
-        } else {
-            " Results "
-        };
+        let title = " Results ";
 
         let list = List::new(items)
             .direction(ListDirection::TopToBottom)
