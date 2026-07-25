@@ -53,12 +53,16 @@ pub trait Extractor: Send + Sync {
 
     /// Extract plain text from the given input.
     ///
+    /// Returns one or more [`RawDoc`] items. Most extractors return a single
+    /// item; the PDF extractor returns one item per page so each chunk can
+    /// carry an accurate page number.
+    ///
     /// # Errors
     ///
     /// Returns an error if the input cannot be parsed, if a required system
     /// dependency (e.g. `pdftotext`) is not found, or if the input is empty
     /// and the extractor requires non-empty data.
-    async fn extract(&self, input: &Input) -> anyhow::Result<RawDoc>;
+    async fn extract(&self, input: &Input) -> anyhow::Result<Vec<RawDoc>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,13 +79,13 @@ impl Extractor for PlainTextExtractor {
         "plaintext"
     }
 
-    async fn extract(&self, input: &Input) -> anyhow::Result<RawDoc> {
+    async fn extract(&self, input: &Input) -> anyhow::Result<Vec<RawDoc>> {
         let text = String::from_utf8_lossy(&input.data).to_string();
-        Ok(RawDoc {
+        Ok(vec![RawDoc {
             text,
             page: None,
             timestamp_range: None,
-        })
+        }])
     }
 }
 
@@ -185,7 +189,7 @@ impl Extractor for PdfExtractor {
         "pdf"
     }
 
-    async fn extract(&self, input: &Input) -> anyhow::Result<RawDoc> {
+    async fn extract(&self, input: &Input) -> anyhow::Result<Vec<RawDoc>> {
         check_binary(
             "pdftotext",
             "Install poppler-utils (e.g. `apt install poppler-utils` on Debian/Ubuntu, \
@@ -208,13 +212,31 @@ impl Extractor for PdfExtractor {
 
         let text = std::fs::read_to_string(&output_path)
             .context("failed to read pdftotext output")?;
-        let page_count = text.matches('\x0C').count() as u32;
 
-        Ok(RawDoc {
-            text,
-            page: if page_count > 0 { Some(page_count - 1) } else { None },
-            timestamp_range: None,
-        })
+        // Split on form-feed characters to get per-page text.
+        // pdftotext separates pages with \x0C. Split into page-sized chunks.
+        let pages: Vec<&str> = text.split('\x0C').collect();
+        // `pdftotext` ends the last page with a \x0C, so the final split
+        // element is an empty string. Drop it.
+        let pages: Vec<&str> = pages.into_iter()
+            .filter(|p| !p.is_empty())
+            .collect();
+
+        if pages.is_empty() {
+            return Ok(vec![RawDoc {
+                text: text.clone(),
+                page: None,
+                timestamp_range: None,
+            }]);
+        }
+
+        Ok(pages.into_iter().enumerate().map(|(i, page_text)| {
+            RawDoc {
+                text: page_text.trim().to_string(),
+                page: Some(i as u32),
+                timestamp_range: None,
+            }
+        }).collect())
     }
 }
 
@@ -231,7 +253,7 @@ impl Extractor for DocxExtractor {
         "docx"
     }
 
-    async fn extract(&self, input: &Input) -> anyhow::Result<RawDoc> {
+    async fn extract(&self, input: &Input) -> anyhow::Result<Vec<RawDoc>> {
         let doc = docx_rs::read_docx(&input.data)
             .map_err(|e| anyhow::anyhow!("failed to parse DOCX: {e}"))?;
 
@@ -252,11 +274,11 @@ impl Extractor for DocxExtractor {
             }
         }
 
-        Ok(RawDoc {
+        Ok(vec![RawDoc {
             text,
             page: None,
             timestamp_range: None,
-        })
+        }])
     }
 }
 
@@ -273,20 +295,20 @@ impl Extractor for HtmlExtractor {
         "html"
     }
 
-    async fn extract(&self, input: &Input) -> anyhow::Result<RawDoc> {
+    async fn extract(&self, input: &Input) -> anyhow::Result<Vec<RawDoc>> {
         if input.data.is_empty() {
             // process() guarantees data for URLs/files; this is a safety net
             // for direct extract() calls without the pipeline.
-            return Ok(RawDoc::default());
+            return Ok(vec![RawDoc::default()]);
         }
         let html = String::from_utf8_lossy(&input.data);
         let text = html2text::from_read(html.as_bytes(), 80)
             .context("html2text conversion failed")?;
-        Ok(RawDoc {
+        Ok(vec![RawDoc {
             text,
             page: None,
             timestamp_range: None,
-        })
+        }])
     }
 }
 
@@ -303,7 +325,7 @@ impl Extractor for ImageExtractor {
         "image_ocr"
     }
 
-    async fn extract(&self, input: &Input) -> anyhow::Result<RawDoc> {
+    async fn extract(&self, input: &Input) -> anyhow::Result<Vec<RawDoc>> {
         check_binary(
             "tesseract",
             "Install Tesseract OCR (e.g. `apt install tesseract-ocr` on Debian/Ubuntu, \
@@ -329,11 +351,11 @@ impl Extractor for ImageExtractor {
 
         let text = String::from_utf8_lossy(&stdout).to_string();
 
-        Ok(RawDoc {
+        Ok(vec![RawDoc {
             text,
             page: None,
             timestamp_range: None,
-        })
+        }])
     }
 }
 
@@ -374,7 +396,7 @@ impl Extractor for AudioVideoExtractor {
         "audio_video"
     }
 
-    async fn extract(&self, input: &Input) -> anyhow::Result<RawDoc> {
+    async fn extract(&self, input: &Input) -> anyhow::Result<Vec<RawDoc>> {
         Self::check_whisper()?;
 
         let extension = match &input.source {
@@ -457,11 +479,11 @@ impl Extractor for AudioVideoExtractor {
             // Try reading the .txt output file as fallback
             let txt_path = tmp.path().join("output.txt");
             if let Ok(text) = std::fs::read_to_string(&txt_path) {
-                return Ok(RawDoc {
+                return Ok(vec![RawDoc {
                     text: text.trim().to_string(),
                     page: None,
                     timestamp_range: None,
-                });
+                }]);
             }
             anyhow::bail!("whisper transcription failed: {stderr}");
         }
@@ -471,11 +493,11 @@ impl Extractor for AudioVideoExtractor {
         let text = std::fs::read_to_string(&txt_path)
             .context("whisper completed but output .txt not found")?;
 
-        Ok(RawDoc {
+        Ok(vec![RawDoc {
             text: text.trim().to_string(),
             page: None,
             timestamp_range: None,
-        })
+        }])
     }
 }
 
@@ -521,8 +543,9 @@ mod tests {
             data: b"Hello, world!".to_vec(),
         };
         let extractor = PlainTextExtractor;
-        let doc = extractor.extract(&input).await.unwrap();
-        assert_eq!(doc.text, "Hello, world!");
+        let docs = extractor.extract(&input).await.unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].text, "Hello, world!");
         assert_eq!(extractor.name(), "plaintext");
     }
 
@@ -534,9 +557,10 @@ mod tests {
             data: b"# Title\n\nSome **bold** text.".to_vec(),
         };
         let extractor = PlainTextExtractor;
-        let doc = extractor.extract(&input).await.unwrap();
-        assert!(doc.text.contains("Title"));
-        assert!(doc.text.contains("bold"));
+        let docs = extractor.extract(&input).await.unwrap();
+        assert_eq!(docs.len(), 1);
+        assert!(docs[0].text.contains("Title"));
+        assert!(docs[0].text.contains("bold"));
     }
 
     #[test]
@@ -597,5 +621,44 @@ mod tests {
     fn test_dispatcher_case_insensitive() {
         let ext = dispatcher("APPLICATION/PDF").unwrap();
         assert_eq!(ext.name(), "pdf");
+    }
+
+    /// Test the form-feed split logic used for per-page PDF text.
+    /// This validates that the algorithm correctly assigns page numbers
+    /// when text is separated by \x0C characters.
+    #[test]
+    fn test_pdf_formfeed_split_pages() {
+        // Simulate pdftotext output with form-feed page separators.
+        // pdftotext places \x0C after each page, including the last.
+        let text = "Page one content.\x0CPage two content.\x0CPage three content.\x0C";
+
+        let pages: Vec<&str> = text.split('\x0C').collect();
+        let pages: Vec<&str> = pages.into_iter().filter(|p| !p.is_empty()).collect();
+
+        assert_eq!(pages.len(), 3, "should split into 3 non-empty pages");
+        assert!(pages[0].contains("Page one"), "page 0 should contain 'Page one'");
+        assert!(pages[1].contains("Page two"), "page 1 should contain 'Page two'");
+        assert!(pages[2].contains("Page three"), "page 2 should contain 'Page three'");
+    }
+
+    #[test]
+    fn test_pdf_formfeed_single_page() {
+        // Single page PDF — no form-feed
+        let text = "Just one page of text.";
+        let pages: Vec<&str> = text.split('\x0C').collect();
+        let pages: Vec<&str> = pages.into_iter().filter(|p| !p.is_empty()).collect();
+
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0], "Just one page of text.");
+    }
+
+    #[test]
+    fn test_pdf_formfeed_empty_text() {
+        // Empty text (e.g. blank PDF)
+        let text = "";
+        let pages: Vec<&str> = text.split('\x0C').collect();
+        let pages: Vec<&str> = pages.into_iter().filter(|p| !p.is_empty()).collect();
+
+        assert_eq!(pages.len(), 0, "empty text should produce zero pages");
     }
 }

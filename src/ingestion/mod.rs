@@ -123,30 +123,39 @@ pub async fn process(input: Input, config: ChunkConfig) -> anyhow::Result<Vec<Ch
 
     // Dispatch to the right extractor
     let extractor = extractor::dispatcher(&detected_type)?;
-    let raw_doc = extractor.extract(&resolved_input).await?;
+    let raw_docs = extractor.extract(&resolved_input).await?;
 
-    // Clean the raw text
-    let cleaned = cleaner::clean(&raw_doc.text);
+    // Process each raw doc (one per page for PDFs, one overall for others)
+    // through clean → chunk → metadata attach, then flatten.
+    let mut result: Vec<Chunk> = Vec::new();
+    for raw_doc in &raw_docs {
+        let cleaned = cleaner::clean(&raw_doc.text);
+        let chunks = chunker::chunk(&cleaned, &config);
+        let total = chunks.len();
 
-    // Chunk
-    let chunks = chunker::chunk(&cleaned, &config);
+        let mut page_chunks: Vec<Chunk> = chunks
+            .into_iter()
+            .enumerate()
+            .map(|(i, text)| {
+                let meta = ChunkMetadata::new(
+                    &resolved_input.source,
+                    extractor.name(),
+                    i,
+                    total,
+                );
+                Chunk {
+                    text,
+                    metadata: ChunkMetadata {
+                        page: raw_doc.page,
+                        timestamp_range: raw_doc.timestamp_range,
+                        ..meta
+                    },
+                }
+            })
+            .collect();
 
-    // Attach metadata
-    let total = chunks.len();
-    let mut result: Vec<Chunk> = chunks
-        .into_iter()
-        .enumerate()
-        .map(|(i, text)| {
-            let mut meta = ChunkMetadata::new(&resolved_input.source, extractor.name(), i, total);
-            if let Some(page) = raw_doc.page {
-                meta.page = Some(page);
-            }
-            if let Some(ts) = raw_doc.timestamp_range {
-                meta.timestamp_range = Some(ts);
-            }
-            Chunk { text, metadata: meta }
-        })
-        .collect();
+        result.append(&mut page_chunks);
+    }
 
     // De-duplicate: skip empty or duplicate chunks
     result.dedup_by(|a, b| a.text == b.text);
@@ -218,6 +227,8 @@ mod tests {
         );
         assert_eq!(chunks[0].metadata.extractor, "plaintext");
         assert_eq!(chunks[0].metadata.chunk_index, 0);
+        // Non-PDF inputs should have no page number
+        assert_eq!(chunks[0].metadata.page, None);
     }
 
     #[tokio::test]

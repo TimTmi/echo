@@ -67,3 +67,16 @@
   - On error, we surface the failure as a flash banner and return to `Browsing` without forcing a list reload -- Qdrant state is unchanged, so showing cached state is the right thing.
   - The form has a `Pending<X>` waiting state with no visible feedback during the HTTP call. Acceptable because the typical call is sub-100 ms locally; if that ever changes, render "Working..." lines inside the detail panel -- the placeholder already exists for this.
   - "Vector config" remains hidden from users. Collections are always created with BGE-M3's (1024, Cosine) shape. This matches `data_models.md` and avoids dragging in vector-config UI for a use case we do not support.
+
+### 2026-07-25: PDF extractor returns per-page RawDoc items for accurate chunk page provenance
+- **Decision**: Changed `Extractor::extract` return type from `RawDoc` to `Vec<RawDoc>`. `PdfExtractor` splits on `\x0C` (form-feed) and returns one doc per page with correct page index. `process()` iterates each doc through clean→chunk separately, stamping `page` from the source doc onto each chunk.
+- **Reason**: Previous implementation computed one `page_count - 1` for the whole document and stamped it on every chunk. For a 50-page PDF, every chunk claimed to be from page 49 — actively wrong and harmful for a RAG/retrieval tool where page provenance matters for citation.
+- **Alternatives considered**:
+  - **Drop the `page` field**: Safest, but loses a useful provenance dimension.
+  - **Keep broken behavior**: Produces misleading citations. Rejected.
+  - **Split in `process()` instead of `extract()`**: Would duplicate the `\x0C` split logic in the pipeline rather than keeping it in the extractor. Rejected — extractor owns format-specific parsing.
+- **Consequences**:
+  - API breaking change: every `Extractor` impl must now return `Vec<RawDoc>`. Non-PDF extractors trivially wrap in `vec![...]`.
+  - Overlap is computed per-page, never crossing a page boundary. This is correct for provenance but may lose inter-page context. Acceptable tradeoff — we can add a "merge adjacent small pages" step later if needed.
+  - Cleaner runs once per page instead of once per document. Negligible cost.
+  - 3 new unit tests validate the form-feed split algorithm. 134 tests pass.

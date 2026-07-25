@@ -50,6 +50,8 @@
 
 - **Extractor subprocess boilerplate factored (2026-07-25)**: Removed 4x duplicated "check binary → write temp file → run command → cleanup" pattern. Added shared helpers `check_binary()`, `make_temp_dir()`, `write_temp_file()`, `run_subprocess_to_file()`, `run_subprocess_to_stdout()`, `input_extension()` in `src/ingestion/extractor.rs`. Temp file lifecycle now RAII-managed via `tempfile::TempDir` instead of manual `remove_file()` calls. `check_ffmpeg`, `check_tesseract`, `check_pdftotext` removed (all → `check_binary()`). `convert_to_wav()` inlined into `AudioVideoExtractor::extract` using shared helpers. Added `tempfile` crate to `Cargo.toml`. 131/131 tests pass.
 
+- **PDF per-page chunk tagging (2026-07-25)**: Changed `Extractor::extract` return type from `RawDoc` to `Vec<RawDoc>`. All 6 extractors updated (non-PDF wrap single doc in `vec![]`). `PdfExtractor::extract` now splits `pdftotext` output on `\x0C` (form-feed) and returns one `RawDoc` per page with correct 0-based `page` number. `process()` iterates per-page docs through clean→chunk, stamping each chunk with its page number from the source `RawDoc`. All 134 tests pass. Added 3 form-feed split tests and updated 2 extractor tests for `Vec<RawDoc>` API.
+
 ## In Progress
 - None
 
