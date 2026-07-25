@@ -94,7 +94,7 @@ pub async fn process(input: Input, config: ChunkConfig) -> anyhow::Result<Vec<Ch
                 .get(url)
                 .send()
                 .await
-                .context(format!("failed to fetch URL: {url}"))?;
+                .with_context(|| format!("failed to fetch URL: {url}"))?;
             if !response.status().is_success() {
                 anyhow::bail!(
                     "HTTP {} when fetching {}",

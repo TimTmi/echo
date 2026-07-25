@@ -450,7 +450,7 @@ impl Extractor for AudioVideoExtractor {
             .arg("-of")
             .arg(tmp.path().join("output")) // output file prefix
             .output()
-            .context(format!("failed to run whisper CLI '{cli}'"))?;
+            .with_context(|| format!("failed to run whisper CLI '{cli}'"))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
