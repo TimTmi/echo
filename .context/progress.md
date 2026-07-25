@@ -48,6 +48,8 @@
 - **Qdrant `upsert_points` + `delete_points` (2026-07-24)**: Added `UpsertPoint` struct, `upsert_points(collection, &[UpsertPoint])` (`PUT /collections/{name}/points`) and `delete_points(collection, &[Value])` (`POST /collections/{name}/points/delete`) to `QdrantClient`. 4 new tests (success + error for upsert; success + 404-as-success for delete).
 - **Delete points from PointViewer (2026-07-24)**: `d` key on PointViewer deletes the selected point via `QdrantClient::delete_points`. Added `selected_point_id()`, `collection()`, `_trigger_refresh()` accessors. Point list auto-refreshes after deletion. Status bar updated with `[D]elete` hint.
 
+- **Extractor subprocess boilerplate factored (2026-07-25)**: Removed 4x duplicated "check binary → write temp file → run command → cleanup" pattern. Added shared helpers `check_binary()`, `make_temp_dir()`, `write_temp_file()`, `run_subprocess_to_file()`, `run_subprocess_to_stdout()`, `input_extension()` in `src/ingestion/extractor.rs`. Temp file lifecycle now RAII-managed via `tempfile::TempDir` instead of manual `remove_file()` calls. `check_ffmpeg`, `check_tesseract`, `check_pdftotext` removed (all → `check_binary()`). `convert_to_wav()` inlined into `AudioVideoExtractor::extract` using shared helpers. Added `tempfile` crate to `Cargo.toml`. 131/131 tests pass.
+
 ## In Progress
 - None
 

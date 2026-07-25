@@ -4,10 +4,11 @@
 //! The [`dispatcher`] function selects the right extractor by MIME type / file
 //! extension.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use async_trait::async_trait;
+use tempfile::TempDir;
 
 /// Input to the ingestion pipeline.
 #[derive(Debug, Clone, PartialEq)]
@@ -85,29 +86,98 @@ impl Extractor for PlainTextExtractor {
 }
 
 // ---------------------------------------------------------------------------
+// Shared subprocess helpers
+// ---------------------------------------------------------------------------
+
+/// Check that `binary` exists and can be run (passing `--version`).
+/// Returns a clear error with `install_hint` if not found.
+fn check_binary(binary: &str, install_hint: &str) -> anyhow::Result<()> {
+    let output = std::process::Command::new(binary)
+        .arg("--version")
+        .output()
+        .with_context(|| format!("{binary} not found. {install_hint}"))?;
+    if !output.status.success() {
+        anyhow::bail!("{binary} --version returned non-zero status");
+    }
+    Ok(())
+}
+
+/// Create a temporary directory with the standard prefix.
+fn make_temp_dir() -> anyhow::Result<TempDir> {
+    TempDir::new().context("failed to create temp dir")
+}
+
+/// Write `data` to `dir / filename`, returning the full path.
+fn write_temp_file(dir: &Path, filename: &str, data: &[u8]) -> anyhow::Result<()> {
+    std::fs::write(dir.join(filename), data)
+        .with_context(|| format!("failed to write temp file '{filename}'"))
+}
+
+/// Run a subprocess that writes its output to a file, then read that file.
+///
+/// Temp files are created inside a [`TempDir`] and automatically cleaned
+/// up when it drops.
+fn run_subprocess_to_file(
+    bin: &str,
+    args: &[&str],
+    output_file: &Path,
+) -> anyhow::Result<Vec<u8>> {
+    let status = std::process::Command::new(bin)
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to run {bin}"))?;
+
+    if !status.status.success() {
+        let stderr = String::from_utf8_lossy(&status.stderr);
+        anyhow::bail!("{bin} failed: {stderr}");
+    }
+
+    std::fs::read(output_file)
+        .with_context(|| format!("failed to read {bin} output file"))
+}
+
+/// Run a subprocess that emits output on stdout, capture it.
+fn run_subprocess_to_stdout(bin: &str, args: &[&str]) -> anyhow::Result<Vec<u8>> {
+    let output = std::process::Command::new(bin)
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to run {bin}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("{bin} failed: {stderr}");
+    }
+
+    Ok(output.stdout)
+}
+
+/// Extract the file extension from an `Input` source (file path or URL).
+fn input_extension(input: &Input, fallback: &str) -> String {
+    match &input.source {
+        Source::File(p) => p
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or(fallback)
+            .to_lowercase(),
+        Source::Url(u) => {
+            let path = u.split('?').next().unwrap_or(u);
+            Path::new(path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or(fallback)
+                .to_lowercase()
+        }
+        Source::Text(_) => fallback.to_lowercase(),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // PDF extractor (pdftotext subprocess)
 // ---------------------------------------------------------------------------
 
 /// PDF extractor — shells out to `pdftotext` (poppler-utils).
 #[derive(Debug)]
 struct PdfExtractor;
-
-impl PdfExtractor {
-    fn check_pdftotext() -> anyhow::Result<()> {
-        let output = std::process::Command::new("pdftotext")
-            .arg("--version")
-            .output()
-            .context(
-                "pdftotext not found. Install poppler-utils (e.g. `apt install poppler-utils` \
-                 on Debian/Ubuntu, `brew install poppler` on macOS, or download from \
-                 https://poppler.freedesktop.org/).",
-            )?;
-        if !output.status.success() {
-            anyhow::bail!("pdftotext --version returned non-zero status");
-        }
-        Ok(())
-    }
-}
 
 #[async_trait]
 impl Extractor for PdfExtractor {
@@ -116,32 +186,28 @@ impl Extractor for PdfExtractor {
     }
 
     async fn extract(&self, input: &Input) -> anyhow::Result<RawDoc> {
-        Self::check_pdftotext()?;
+        check_binary(
+            "pdftotext",
+            "Install poppler-utils (e.g. `apt install poppler-utils` on Debian/Ubuntu, \
+             `brew install poppler` on macOS, or download from https://poppler.freedesktop.org/).",
+        )?;
 
-        let mut temp_path = std::env::temp_dir();
-        temp_path.push(format!("echo_pdf_{}.pdf", std::process::id()));
-        std::fs::write(&temp_path, &input.data).context("failed to write temp PDF")?;
+        let tmp = make_temp_dir()?;
+        let input_path = tmp.path().join("input.pdf");
+        let output_path = tmp.path().join("output.txt");
+        write_temp_file(tmp.path(), "input.pdf", &input.data)?;
 
-        let output_path = temp_path.with_extension("txt");
-
-        let status = std::process::Command::new("pdftotext")
-            .arg(&temp_path)
-            .arg(&output_path)
-            .output()
-            .context("failed to run pdftotext")?;
-
-        let _ = std::fs::remove_file(&temp_path);
-
-        if !status.status.success() {
-            let stderr = String::from_utf8_lossy(&status.stderr);
-            let _ = std::fs::remove_file(&output_path);
-            anyhow::bail!("pdftotext failed: {stderr}");
-        }
+        run_subprocess_to_file(
+            "pdftotext",
+            &[
+                input_path.to_str().unwrap(),
+                output_path.to_str().unwrap(),
+            ],
+            &output_path,
+        )?;
 
         let text = std::fs::read_to_string(&output_path)
             .context("failed to read pdftotext output")?;
-        let _ = std::fs::remove_file(&output_path);
-
         let page_count = text.matches('\x0C').count() as u32;
 
         Ok(RawDoc {
@@ -231,23 +297,6 @@ impl Extractor for HtmlExtractor {
 #[derive(Debug)]
 struct ImageExtractor;
 
-impl ImageExtractor {
-    fn check_tesseract() -> anyhow::Result<()> {
-        let output = std::process::Command::new("tesseract")
-            .arg("--version")
-            .output()
-            .context(
-                "tesseract not found. Install Tesseract OCR (e.g. `apt install tesseract-ocr` \
-                 on Debian/Ubuntu, `brew install tesseract` on macOS, or download from \
-                 https://github.com/tesseract-ocr/tesseract).",
-            )?;
-        if !output.status.success() {
-            anyhow::bail!("tesseract --version returned non-zero status");
-        }
-        Ok(())
-    }
-}
-
 #[async_trait]
 impl Extractor for ImageExtractor {
     fn name(&self) -> &'static str {
@@ -255,44 +304,30 @@ impl Extractor for ImageExtractor {
     }
 
     async fn extract(&self, input: &Input) -> anyhow::Result<RawDoc> {
-        Self::check_tesseract()?;
+        check_binary(
+            "tesseract",
+            "Install Tesseract OCR (e.g. `apt install tesseract-ocr` on Debian/Ubuntu, \
+             `brew install tesseract` on macOS, or download from \
+             https://github.com/tesseract-ocr/tesseract).",
+        )?;
 
-        let mut temp_path = std::env::temp_dir();
-        temp_path.push(format!("echo_ocr_{}", std::process::id()));
+        let tmp = make_temp_dir()?;
+        let ext = input_extension(input, "png");
+        let filename = format!("input.{ext}");
+        let img_path = tmp.path().join(&filename);
+        write_temp_file(tmp.path(), &filename, &input.data)?;
 
-        // Detect extension from source
-        let ext = match &input.source {
-            Source::File(p) => p.extension().and_then(|e| e.to_str()).unwrap_or("png"),
-            Source::Url(u) => {
-                let path = u.split('?').next().unwrap_or(u);
-                std::path::Path::new(path)
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("png")
-            }
-            Source::Text(_) => "png",
-        };
+        let stdout = run_subprocess_to_stdout(
+            "tesseract",
+            &[
+                img_path.to_str().unwrap(),
+                "stdout",
+                "-l",
+                "eng",
+            ],
+        )?;
 
-        let img_path = temp_path.with_extension(ext);
-        std::fs::write(&img_path, &input.data).context("failed to write temp image")?;
-
-        // tesseract outputs to a file with _out suffix; specify stdout mode
-        let output = std::process::Command::new("tesseract")
-            .arg(&img_path)
-            .arg("stdout")
-            .arg("-l")
-            .arg("eng")
-            .output()
-            .context("failed to run tesseract")?;
-
-        let _ = std::fs::remove_file(&img_path);
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("tesseract failed: {stderr}");
-        }
-
-        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        let text = String::from_utf8_lossy(&stdout).to_string();
 
         Ok(RawDoc {
             text,
@@ -310,20 +345,6 @@ impl Extractor for ImageExtractor {
 struct AudioVideoExtractor;
 
 impl AudioVideoExtractor {
-    fn check_ffmpeg() -> anyhow::Result<()> {
-        let output = std::process::Command::new("ffmpeg")
-            .arg("-version")
-            .output()
-            .context(
-                "ffmpeg not found. Install ffmpeg (e.g. `apt install ffmpeg` on Debian/Ubuntu, \
-                 `brew install ffmpeg` on macOS, or download from https://ffmpeg.org/).",
-            )?;
-        if !output.status.success() {
-            anyhow::bail!("ffmpeg -version returned non-zero status");
-        }
-        Ok(())
-    }
-
     fn check_whisper() -> anyhow::Result<()> {
         // Check for whisper.cpp CLI (the `main` binary or `whisper-cli`)
         let candidates = &["whisper-cli", "whisper", "main"];
@@ -345,43 +366,6 @@ impl AudioVideoExtractor {
     fn whisper_cli() -> String {
         std::env::var("WHISPER_CLI").unwrap_or_else(|_| "whisper-cli".to_string())
     }
-
-    fn convert_to_wav(data: &[u8], extension: &str) -> anyhow::Result<Vec<u8>> {
-        Self::check_ffmpeg()?;
-
-        let mut input_path = std::env::temp_dir();
-        input_path.push(format!("echo_media_in_{}.{}", std::process::id(), extension));
-        let mut output_path = std::env::temp_dir();
-        output_path.push(format!("echo_media_out_{}.wav", std::process::id()));
-
-        std::fs::write(&input_path, data).context("failed to write temp media file")?;
-
-        let status = std::process::Command::new("ffmpeg")
-            .arg("-y")
-            .arg("-i")
-            .arg(&input_path)
-            .arg("-ar")
-            .arg("16000")
-            .arg("-ac")
-            .arg("1")
-            .arg("-sample_fmt")
-            .arg("s16")
-            .arg(&output_path)
-            .output()
-            .context("failed to run ffmpeg conversion")?;
-
-        let _ = std::fs::remove_file(&input_path);
-
-        if !status.status.success() {
-            let stderr = String::from_utf8_lossy(&status.stderr);
-            let _ = std::fs::remove_file(&output_path);
-            anyhow::bail!("ffmpeg conversion failed: {stderr}");
-        }
-
-        let wav_data = std::fs::read(&output_path).context("failed to read WAV output")?;
-        let _ = std::fs::remove_file(&output_path);
-        Ok(wav_data)
-    }
 }
 
 #[async_trait]
@@ -401,7 +385,7 @@ impl Extractor for AudioVideoExtractor {
                 .to_lowercase(),
             Source::Url(u) => {
                 let path = u.split('?').next().unwrap_or(u);
-                std::path::Path::new(path)
+                Path::new(path)
                     .extension()
                     .and_then(|e| e.to_str())
                     .unwrap_or("wav")
@@ -412,16 +396,46 @@ impl Extractor for AudioVideoExtractor {
             }
         };
 
-        // Convert to WAV if needed, write to temp file
+        // Convert to WAV if needed
         let wav_data = if extension == "wav" {
             input.data.clone()
         } else {
-            Self::convert_to_wav(&input.data, &extension)?
+            check_binary(
+                "ffmpeg",
+                "Install ffmpeg (e.g. `apt install ffmpeg` on Debian/Ubuntu, \
+                 `brew install ffmpeg` on macOS, or download from https://ffmpeg.org/).",
+            )?;
+
+            let tmp = make_temp_dir()?;
+            let in_name = format!("input.{extension}");
+            let out_name = "output.wav".to_string();
+            let in_path = tmp.path().join(&in_name);
+            let out_path = tmp.path().join(&out_name);
+            write_temp_file(tmp.path(), &in_name, &input.data)?;
+
+            run_subprocess_to_file(
+                "ffmpeg",
+                &[
+                    "-y",
+                    "-i",
+                    in_path.to_str().unwrap(),
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    "-sample_fmt",
+                    "s16",
+                    out_path.to_str().unwrap(),
+                ],
+                &out_path,
+            )?
         };
 
-        let mut wav_path = std::env::temp_dir();
-        wav_path.push(format!("echo_whisper_in_{}.wav", std::process::id()));
-        std::fs::write(&wav_path, &wav_data).context("failed to write temp WAV")?;
+        // Write WAV for whisper and transcribe
+        let tmp = make_temp_dir()?;
+        let wav_name = "input.wav".to_string();
+        let wav_path = tmp.path().join(&wav_name);
+        write_temp_file(tmp.path(), &wav_name, &wav_data)?;
 
         let model_path = std::env::var("WHISPER_MODEL_PATH")
             .unwrap_or_else(|_| "models/ggml-base.en.bin".to_string());
@@ -434,33 +448,28 @@ impl Extractor for AudioVideoExtractor {
             .arg(&wav_path)
             .arg("-otxt")   // output as plain text
             .arg("-of")
-            .arg(wav_path.with_extension("")) // output file prefix (wav_path without .wav)
+            .arg(tmp.path().join("output")) // output file prefix
             .output()
             .context(format!("failed to run whisper CLI '{cli}'"))?;
-
-        let _ = std::fs::remove_file(&wav_path);
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             // Try reading the .txt output file as fallback
-            let txt_path = wav_path.with_extension("txt");
+            let txt_path = tmp.path().join("output.txt");
             if let Ok(text) = std::fs::read_to_string(&txt_path) {
-                let _ = std::fs::remove_file(&txt_path);
                 return Ok(RawDoc {
                     text: text.trim().to_string(),
                     page: None,
                     timestamp_range: None,
                 });
             }
-            let _ = std::fs::remove_file(&txt_path);
             anyhow::bail!("whisper transcription failed: {stderr}");
         }
 
-        // whisper.cpp writes to a .txt file alongside the input
-        let txt_path = wav_path.with_extension("txt");
+        // whisper.cpp writes to output.txt alongside the prefix
+        let txt_path = tmp.path().join("output.txt");
         let text = std::fs::read_to_string(&txt_path)
             .context("whisper completed but output .txt not found")?;
-        let _ = std::fs::remove_file(&txt_path);
 
         Ok(RawDoc {
             text: text.trim().to_string(),

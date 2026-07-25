@@ -46,5 +46,8 @@ regex = "1"
 # Async trait support
 async-trait = "0.1"
 
+# Temp file / directory management (RAII cleanup)
+tempfile = "3"
+
 [dev-dependencies]
 mockito = "1"
