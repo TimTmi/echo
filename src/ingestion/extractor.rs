@@ -163,33 +163,6 @@ impl Extractor for PdfExtractor {
 #[derive(Debug)]
 struct HtmlExtractor;
 
-impl HtmlExtractor {
-    async fn ensure_data(input: &Input) -> anyhow::Result<Vec<u8>> {
-        if !input.data.is_empty() {
-            return Ok(input.data.clone());
-        }
-        match &input.source {
-            Source::Url(url) => {
-                let client = reqwest::Client::new();
-                let response = client
-                    .get(url)
-                    .send()
-                    .await
-                    .context(format!("failed to fetch URL: {url}"))?;
-                if !response.status().is_success() {
-                    anyhow::bail!("HTTP {} when fetching {url}", response.status());
-                }
-                let bytes = response.bytes().await?;
-                Ok(bytes.to_vec())
-            }
-            Source::File(p) => {
-                std::fs::read(p).context(format!("failed to read file: {}", p.display()))
-            }
-            Source::Text(_) => anyhow::bail!("HTML extractor requires a file or URL source"),
-        }
-    }
-}
-
 #[async_trait]
 impl Extractor for HtmlExtractor {
     fn name(&self) -> &'static str {
@@ -197,8 +170,12 @@ impl Extractor for HtmlExtractor {
     }
 
     async fn extract(&self, input: &Input) -> anyhow::Result<RawDoc> {
-        let data = Self::ensure_data(input).await?;
-        let html = String::from_utf8_lossy(&data);
+        if input.data.is_empty() {
+            // process() guarantees data for URLs/files; this is a safety net
+            // for direct extract() calls without the pipeline.
+            return Ok(RawDoc::default());
+        }
+        let html = String::from_utf8_lossy(&input.data);
         let text = html2text::from_read(html.as_bytes(), 80)
             .context("html2text conversion failed")?;
         Ok(RawDoc {
