@@ -3,6 +3,7 @@
 //! HTTP client for llama.cpp embedding server (BGE-M3).
 //! Generates embeddings via the OpenAI-compatible `/v1/embeddings` endpoint.
 
+use std::time::Duration;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
@@ -52,7 +53,10 @@ impl EmbeddingClient {
         Self {
             base_url: base_url.into(),
             model: model.into(),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .expect("failed to build embedding HTTP client"),
         }
     }
 

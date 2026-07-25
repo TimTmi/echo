@@ -4,6 +4,7 @@
 //! Communicates with Qdrant's HTTP API to list collections,
 //! view collection info, and (in future) manage points.
 
+use std::time::Duration;
 use anyhow::Context;
 use serde::Deserialize;
 use serde_json::Value;
@@ -64,7 +65,10 @@ impl QdrantClient {
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .expect("failed to build Qdrant HTTP client"),
         }
     }
 

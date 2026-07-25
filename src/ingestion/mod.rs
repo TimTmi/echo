@@ -24,6 +24,7 @@ pub mod extractor;
 pub mod cleaner;
 pub mod chunker;
 
+use std::time::Duration;
 use anyhow::Context;
 use extractor::{Input, Source};
 use chunker::ChunkConfig;
@@ -89,7 +90,10 @@ pub async fn process(input: Input, config: ChunkConfig) -> anyhow::Result<Vec<Ch
     // Resolve URLs by fetching content
     let resolved_input = match &input.source {
         Source::Url(url) => {
-            let client = reqwest::Client::new();
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .context("failed to build HTTP client")?;
             let response = client
                 .get(url)
                 .send()
