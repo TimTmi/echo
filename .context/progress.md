@@ -54,6 +54,12 @@
 
 - **Download size cap for URL ingestion (2026-07-26)**: `response.bytes().await` in `mod.rs` had no size limit, risking OOM on multi-GB URLs. Added `Content-Length` header check before reading body (rejects > 100 MiB). Added post-read `bytes.len()` check for chunked/no-CL responses. Const `MAX_DOWNLOAD_SIZE = 100 * 1024 * 1024` at module level. 2 new regression tests with mockito: `test_download_rejects_oversized_content_length` (matching body + CL) and `test_download_rejects_oversized_body_no_content_length` (chunked, no CL). 136/136 tests pass.
 
+- **CommandRunner trait + subprocess mockability (2026-07-25)**: Added `CommandRunner` trait with `run_to_stdout`, `run_to_file`, `check_binary` methods. `RealCommandRunner` wraps `std::process::Command`. `MockCommandRunner` returns canned output/error for testing. Refactored `PdfExtractor`, `ImageExtractor`, `AudioVideoExtractor` to carry `Box<dyn CommandRunner>`. `dispatcher()` uses `::new()` (real runner). `with_runner()` constructor for test injection. 11 new mock-based tests: binary-missing, subprocess-fails, output-file-missing, single-page, multi-page for PDF; binary-missing, subprocess-fails, extracts-text for Image; binary-missing, wav-passthrough for AudioVideo. Old free functions `check_binary`, `run_subprocess_to_file`, `run_subprocess_to_stdout` removed.
+
+- **Page-metadata bug fix (2026-07-25)**: `process()` in `mod.rs` now uses global `chunk_index` and `total_chunks` across all raw_docs (multi-page PDFs), not per-page. Each PDF page formerly reset `chunk_index → 0` and `total_chunks → local_count`. Now index accumulates, and `total_chunks` is fixed after all pages processed.
+
+- **New ingestion tests (2026-07-25)**: 4 added — `test_refine_content_type_extensionless_url` (mod.rs), `test_clean_with_footer_strip_substring_no_false_positive` (mod.rs), `test_process_concurrent_text_inputs` (mod.rs, `tokio::join!` two plain-text pipelines). 154/154 tests pass.
+
 ## In Progress
 - None
 

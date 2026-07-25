@@ -11,6 +11,7 @@ Single Rust binary with a ratatui-based terminal UI. The app is a standalone cli
 | **Qdrant Client** | REST API client for Qdrant — create/delete collections, upsert/search points, view collection info |
 | **Embedding Client** | HTTP client for llama.cpp embedding server (BGE-M3) — generate embeddings from text |
 | **Config Module** | Load/save local config (connection URLs, defaults) from a TOML file |
+| **Ingestion Pipeline** | Extract → Clean → Chunk pipeline. `process()` dispatches per MIME to `Extractor` impls. Subprocess-based extractors (PDF, Image, Audio/Video) accept injectable `CommandRunner` trait for testability. |
 | **App State / Controller** | Orchestrate between UI events and service clients, manage application state machine |
 
 ## Communication

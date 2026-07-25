@@ -10,6 +10,185 @@ use anyhow::Context;
 use async_trait::async_trait;
 use tempfile::TempDir;
 
+// ---------------------------------------------------------------------------
+// CommandRunner trait — injectable for testing subprocess-based extractors
+// ---------------------------------------------------------------------------
+
+/// Abstraction over running external commands.
+///
+/// The real implementation calls [`std::process::Command`]. A test/mock impl
+/// can return canned results without needing real binaries installed.
+pub trait CommandRunner: Send + Sync + std::fmt::Debug {
+    /// Run `binary` with `args`, return its stdout on success.
+    fn run_to_stdout(&self, binary: &str, args: &[&str]) -> anyhow::Result<Vec<u8>>;
+
+    /// Run `binary` with `args`, then read the file at `output_path`.
+    fn run_to_file(
+        &self,
+        binary: &str,
+        args: &[&str],
+        output_path: &Path,
+    ) -> anyhow::Result<Vec<u8>>;
+
+    /// Check whether `binary` exists and can be invoked.
+    fn check_binary(&self, binary: &str, install_hint: &str) -> anyhow::Result<()>;
+}
+
+/// Real [`CommandRunner`] that shells out to system binaries.
+#[derive(Debug, Default)]
+pub struct RealCommandRunner;
+
+impl CommandRunner for RealCommandRunner {
+    fn run_to_stdout(&self, binary: &str, args: &[&str]) -> anyhow::Result<Vec<u8>> {
+        let output = std::process::Command::new(binary)
+            .args(args)
+            .output()
+            .with_context(|| format!("failed to run {binary}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("{binary} failed: {stderr}");
+        }
+        Ok(output.stdout)
+    }
+
+    fn run_to_file(
+        &self,
+        binary: &str,
+        args: &[&str],
+        output_path: &Path,
+    ) -> anyhow::Result<Vec<u8>> {
+        let output = std::process::Command::new(binary)
+            .args(args)
+            .output()
+            .with_context(|| format!("failed to run {binary}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("{binary} failed: {stderr}");
+        }
+        std::fs::read(output_path)
+            .with_context(|| format!("failed to read {binary} output file"))
+    }
+
+    fn check_binary(&self, binary: &str, install_hint: &str) -> anyhow::Result<()> {
+        let output = std::process::Command::new(binary)
+            .arg("--version")
+            .output()
+            .with_context(|| format!("{binary} not found. {install_hint}"))?;
+        if !output.status.success() {
+            anyhow::bail!("{binary} --version returned non-zero status");
+        }
+        Ok(())
+    }
+}
+
+/// Mock [`CommandRunner`] for use in tests.
+#[derive(Debug)]
+pub(crate) struct MockCommandRunner {
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
+    pub(crate) exit_code: i32,
+    pub(crate) binary_missing: bool,
+    pub(crate) output_file_content: Option<Vec<u8>>,
+    pub(crate) output_file_missing: bool,
+}
+
+impl MockCommandRunner {
+    pub(crate) fn new() -> Self {
+        Self {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            exit_code: 0,
+            binary_missing: false,
+            output_file_content: None,
+            output_file_missing: false,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_exit_code(mut self, code: i32) -> Self {
+        self.exit_code = code;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_stderr(mut self, err: &[u8]) -> Self {
+        self.stderr = err.to_vec();
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_stdout(mut self, out: &[u8]) -> Self {
+        self.stdout = out.to_vec();
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_binary_missing(mut self) -> Self {
+        self.binary_missing = true;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_output_file(mut self, content: &[u8]) -> Self {
+        self.output_file_content = Some(content.to_vec());
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_output_file_missing(mut self) -> Self {
+        self.output_file_missing = true;
+        self
+    }
+}
+
+#[cfg(test)]
+impl CommandRunner for MockCommandRunner {
+    fn run_to_stdout(&self, _binary: &str, _args: &[&str]) -> anyhow::Result<Vec<u8>> {
+        if self.binary_missing {
+            anyhow::bail!("binary not found (mock)")
+        }
+        if self.exit_code != 0 {
+            let stderr = String::from_utf8_lossy(&self.stderr);
+            anyhow::bail!("mock binary failed: {stderr}");
+        }
+        Ok(self.stdout.clone())
+    }
+
+    fn run_to_file(
+        &self,
+        binary: &str,
+        _args: &[&str],
+        output_path: &Path,
+    ) -> anyhow::Result<Vec<u8>> {
+        if self.binary_missing {
+            anyhow::bail!("binary not found (mock)")
+        }
+        if self.exit_code != 0 {
+            let stderr = String::from_utf8_lossy(&self.stderr);
+            anyhow::bail!("{binary} failed: {stderr}");
+        }
+        if self.output_file_missing {
+            anyhow::bail!("failed to read {binary} output file")
+        }
+        // Write the mock content to the real temp file so the extractor
+        // can read it back with std::fs::read_to_string.
+        if let Some(content) = &self.output_file_content {
+            std::fs::write(output_path, content)
+                .with_context(|| format!("mock failed to write {binary} output"))?;
+            Ok(content.clone())
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    fn check_binary(&self, _binary: &str, install_hint: &str) -> anyhow::Result<()> {
+        if self.binary_missing {
+            anyhow::bail!("binary not found. {install_hint}");
+        }
+        Ok(())
+    }
+}
+
 /// Maximum bytes for file-based inputs (DOCX, PDF, images, audio/video).
 /// Files exceeding this limit are rejected before any extraction work.
 /// Matches [`MAX_DOWNLOAD_SIZE`](crate::ingestion::MAX_DOWNLOAD_SIZE) in
@@ -101,21 +280,8 @@ impl Extractor for PlainTextExtractor {
 }
 
 // ---------------------------------------------------------------------------
-// Shared subprocess helpers
+// Shared helpers
 // ---------------------------------------------------------------------------
-
-/// Check that `binary` exists and can be run (passing `--version`).
-/// Returns a clear error with `install_hint` if not found.
-fn check_binary(binary: &str, install_hint: &str) -> anyhow::Result<()> {
-    let output = std::process::Command::new(binary)
-        .arg("--version")
-        .output()
-        .with_context(|| format!("{binary} not found. {install_hint}"))?;
-    if !output.status.success() {
-        anyhow::bail!("{binary} --version returned non-zero status");
-    }
-    Ok(())
-}
 
 /// Create a temporary directory with the standard prefix.
 fn make_temp_dir() -> anyhow::Result<TempDir> {
@@ -126,44 +292,6 @@ fn make_temp_dir() -> anyhow::Result<TempDir> {
 fn write_temp_file(dir: &Path, filename: &str, data: &[u8]) -> anyhow::Result<()> {
     std::fs::write(dir.join(filename), data)
         .with_context(|| format!("failed to write temp file '{filename}'"))
-}
-
-/// Run a subprocess that writes its output to a file, then read that file.
-///
-/// Temp files are created inside a [`TempDir`] and automatically cleaned
-/// up when it drops.
-fn run_subprocess_to_file(
-    bin: &str,
-    args: &[&str],
-    output_file: &Path,
-) -> anyhow::Result<Vec<u8>> {
-    let status = std::process::Command::new(bin)
-        .args(args)
-        .output()
-        .with_context(|| format!("failed to run {bin}"))?;
-
-    if !status.status.success() {
-        let stderr = String::from_utf8_lossy(&status.stderr);
-        anyhow::bail!("{bin} failed: {stderr}");
-    }
-
-    std::fs::read(output_file)
-        .with_context(|| format!("failed to read {bin} output file"))
-}
-
-/// Run a subprocess that emits output on stdout, capture it.
-fn run_subprocess_to_stdout(bin: &str, args: &[&str]) -> anyhow::Result<Vec<u8>> {
-    let output = std::process::Command::new(bin)
-        .args(args)
-        .output()
-        .with_context(|| format!("failed to run {bin}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("{bin} failed: {stderr}");
-    }
-
-    Ok(output.stdout)
 }
 
 /// Extract the file extension from an `Input` source (file path or URL).
@@ -192,7 +320,21 @@ fn input_extension(input: &Input, fallback: &str) -> String {
 
 /// PDF extractor — shells out to `pdftotext` (poppler-utils).
 #[derive(Debug)]
-struct PdfExtractor;
+struct PdfExtractor {
+    runner: Box<dyn CommandRunner>,
+}
+
+impl PdfExtractor {
+    fn new() -> Self {
+        Self {
+            runner: Box::new(RealCommandRunner),
+        }
+    }
+
+    fn with_runner(runner: Box<dyn CommandRunner>) -> Self {
+        Self { runner }
+    }
+}
 
 #[async_trait]
 impl Extractor for PdfExtractor {
@@ -208,7 +350,7 @@ impl Extractor for PdfExtractor {
                 MAX_FILE_SIZE,
             );
         }
-        check_binary(
+        self.runner.check_binary(
             "pdftotext",
             "Install poppler-utils (e.g. `apt install poppler-utils` on Debian/Ubuntu, \
              `brew install poppler` on macOS, or download from https://poppler.freedesktop.org/).",
@@ -219,7 +361,7 @@ impl Extractor for PdfExtractor {
         let output_path = tmp.path().join("output.txt");
         write_temp_file(tmp.path(), "input.pdf", &input.data)?;
 
-        run_subprocess_to_file(
+        self.runner.run_to_file(
             "pdftotext",
             &[
                 input_path.to_str().unwrap(),
@@ -346,7 +488,21 @@ impl Extractor for HtmlExtractor {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
-struct ImageExtractor;
+struct ImageExtractor {
+    runner: Box<dyn CommandRunner>,
+}
+
+impl ImageExtractor {
+    fn new() -> Self {
+        Self {
+            runner: Box::new(RealCommandRunner),
+        }
+    }
+
+    fn with_runner(runner: Box<dyn CommandRunner>) -> Self {
+        Self { runner }
+    }
+}
 
 #[async_trait]
 impl Extractor for ImageExtractor {
@@ -362,7 +518,7 @@ impl Extractor for ImageExtractor {
                 MAX_FILE_SIZE,
             );
         }
-        check_binary(
+        self.runner.check_binary(
             "tesseract",
             "Install Tesseract OCR (e.g. `apt install tesseract-ocr` on Debian/Ubuntu, \
              `brew install tesseract` on macOS, or download from \
@@ -375,7 +531,7 @@ impl Extractor for ImageExtractor {
         let img_path = tmp.path().join(&filename);
         write_temp_file(tmp.path(), &filename, &input.data)?;
 
-        let stdout = run_subprocess_to_stdout(
+        let stdout = self.runner.run_to_stdout(
             "tesseract",
             &[
                 img_path.to_str().unwrap(),
@@ -401,18 +557,26 @@ impl Extractor for ImageExtractor {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
-struct AudioVideoExtractor;
+struct AudioVideoExtractor {
+    runner: Box<dyn CommandRunner>,
+}
 
 impl AudioVideoExtractor {
-    fn check_whisper() -> anyhow::Result<()> {
+    fn new() -> Self {
+        Self {
+            runner: Box::new(RealCommandRunner),
+        }
+    }
+
+    fn with_runner(runner: Box<dyn CommandRunner>) -> Self {
+        Self { runner }
+    }
+
+    fn check_whisper(&self) -> anyhow::Result<()> {
         // Check for whisper.cpp CLI (the `main` binary or `whisper-cli`)
         let candidates = &["whisper-cli", "whisper", "main"];
         for cmd in candidates {
-            if std::process::Command::new(cmd)
-                .arg("--help")
-                .output()
-                .is_ok()
-            {
+            if self.runner.run_to_stdout(cmd, &["--help"]).is_ok() {
                 return Ok(());
             }
         }
@@ -441,7 +605,7 @@ impl Extractor for AudioVideoExtractor {
                 MAX_FILE_SIZE,
             );
         }
-        Self::check_whisper()?;
+        self.check_whisper()?;
 
         let extension = match &input.source {
             Source::File(p) => p
@@ -466,7 +630,7 @@ impl Extractor for AudioVideoExtractor {
         let wav_data = if extension == "wav" {
             input.data.clone()
         } else {
-            check_binary(
+            self.runner.check_binary(
                 "ffmpeg",
                 "Install ffmpeg (e.g. `apt install ffmpeg` on Debian/Ubuntu, \
                  `brew install ffmpeg` on macOS, or download from https://ffmpeg.org/).",
@@ -479,7 +643,7 @@ impl Extractor for AudioVideoExtractor {
             let out_path = tmp.path().join(&out_name);
             write_temp_file(tmp.path(), &in_name, &input.data)?;
 
-            run_subprocess_to_file(
+            self.runner.run_to_file(
                 "ffmpeg",
                 &[
                     "-y",
@@ -567,7 +731,7 @@ pub fn dispatcher(content_type: &str) -> anyhow::Result<Box<dyn Extractor>> {
         return Ok(Box::new(PlainTextExtractor));
     }
     if ct == "application/pdf" {
-        return Ok(Box::new(PdfExtractor));
+        return Ok(Box::new(PdfExtractor::new()));
     }
     if ct == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" {
         return Ok(Box::new(DocxExtractor));
@@ -576,10 +740,10 @@ pub fn dispatcher(content_type: &str) -> anyhow::Result<Box<dyn Extractor>> {
         return Ok(Box::new(HtmlExtractor));
     }
     if ct.starts_with("image/") {
-        return Ok(Box::new(ImageExtractor));
+        return Ok(Box::new(ImageExtractor::new()));
     }
     if ct.starts_with("audio/") || ct.starts_with("video/") {
-        return Ok(Box::new(AudioVideoExtractor));
+        return Ok(Box::new(AudioVideoExtractor::new()));
     }
 
     anyhow::bail!("unsupported content type: {content_type}")
@@ -758,7 +922,7 @@ mod tests {
     #[tokio::test]
     async fn test_pdf_rejects_oversized() {
         let input = oversized_input("application/pdf");
-        let ext = PdfExtractor;
+        let ext = PdfExtractor::new();
         let err = ext.extract(&input).await.unwrap_err();
         assert!(err.to_string().contains("exceeds maximum allowed"));
     }
@@ -766,7 +930,7 @@ mod tests {
     #[tokio::test]
     async fn test_image_rejects_oversized() {
         let input = oversized_input("image/png");
-        let ext = ImageExtractor;
+        let ext = ImageExtractor::new();
         let err = ext.extract(&input).await.unwrap_err();
         assert!(err.to_string().contains("exceeds maximum allowed"));
     }
@@ -774,8 +938,144 @@ mod tests {
     #[tokio::test]
     async fn test_audio_rejects_oversized() {
         let input = oversized_input("audio/mp3");
-        let ext = AudioVideoExtractor;
+        let ext = AudioVideoExtractor::new();
         let err = ext.extract(&input).await.unwrap_err();
         assert!(err.to_string().contains("exceeds maximum allowed"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Mock-based subprocess extractor tests
+    // -----------------------------------------------------------------------
+
+    fn pdf_input() -> Input {
+        Input {
+            source: Source::File(PathBuf::from("test.pdf")),
+            content_type: "application/pdf".to_string(),
+            data: b"fake pdf bytes".to_vec(),
+        }
+    }
+
+    fn image_input() -> Input {
+        Input {
+            source: Source::File(PathBuf::from("test.png")),
+            content_type: "image/png".to_string(),
+            data: b"fake png bytes".to_vec(),
+        }
+    }
+
+    fn audio_input() -> Input {
+        Input {
+            source: Source::File(PathBuf::from("test.mp3")),
+            content_type: "audio/mp3".to_string(),
+            data: b"fake audio bytes".to_vec(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pdf_binary_missing() {
+        let ext = PdfExtractor::with_runner(Box::new(MockCommandRunner::new().with_binary_missing()));
+        let err = ext.extract(&pdf_input()).await.unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_pdf_subprocess_fails() {
+        let ext = PdfExtractor::with_runner(Box::new(
+            MockCommandRunner::new()
+                .with_exit_code(1)
+                .with_stderr(b"permission denied"),
+        ));
+        let err = ext.extract(&pdf_input()).await.unwrap_err();
+        assert!(err.to_string().contains("failed"));
+    }
+
+    #[tokio::test]
+    async fn test_pdf_output_file_missing() {
+        let ext = PdfExtractor::with_runner(Box::new(
+            MockCommandRunner::new().with_output_file_missing(),
+        ));
+        let err = ext.extract(&pdf_input()).await.unwrap_err();
+        assert!(err.to_string().contains("failed to read"));
+    }
+
+    #[tokio::test]
+    async fn test_pdf_single_page() {
+        let ext = PdfExtractor::with_runner(Box::new(
+            MockCommandRunner::new()
+                .with_output_file(b"Single page content.\x0C"),
+        ));
+        let docs = ext.extract(&pdf_input()).await.unwrap();
+        assert_eq!(docs.len(), 1, "single form-feed => one page");
+        assert_eq!(docs[0].page, Some(0));
+        assert!(docs[0].text.contains("Single page content"));
+    }
+
+    #[tokio::test]
+    async fn test_pdf_multi_page() {
+        let ext = PdfExtractor::with_runner(Box::new(
+            MockCommandRunner::new()
+                .with_output_file(b"Page one.\x0CPage two.\x0CPage three.\x0C"),
+        ));
+        let docs = ext.extract(&pdf_input()).await.unwrap();
+        assert_eq!(docs.len(), 3);
+        assert_eq!(docs[0].page, Some(0));
+        assert_eq!(docs[1].page, Some(1));
+        assert_eq!(docs[2].page, Some(2));
+    }
+
+    #[tokio::test]
+    async fn test_image_binary_missing() {
+        let ext = ImageExtractor::with_runner(Box::new(
+            MockCommandRunner::new().with_binary_missing(),
+        ));
+        let err = ext.extract(&image_input()).await.unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_image_subprocess_fails() {
+        let ext = ImageExtractor::with_runner(Box::new(
+            MockCommandRunner::new()
+                .with_exit_code(1)
+                .with_stderr(b"ocr error"),
+        ));
+        let err = ext.extract(&image_input()).await.unwrap_err();
+        assert!(err.to_string().contains("failed"));
+    }
+
+    #[tokio::test]
+    async fn test_image_extracts_text() {
+        let ext = ImageExtractor::with_runner(Box::new(
+            MockCommandRunner::new().with_stdout(b"Extracted OCR text."),
+        ));
+        let docs = ext.extract(&image_input()).await.unwrap();
+        assert_eq!(docs.len(), 1);
+        assert!(docs[0].text.contains("OCR text"));
+    }
+
+    #[tokio::test]
+    async fn test_audio_binary_missing() {
+        let ext = AudioVideoExtractor::with_runner(Box::new(
+            MockCommandRunner::new().with_binary_missing(),
+        ));
+        let err = ext.extract(&audio_input()).await.unwrap_err();
+        assert!(err.to_string().contains("Install Tesseract")  // ffmpeg check_binary hint
+            || err.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_audio_wav_passthrough() {
+        // WAV input does not trigger ffmpeg, only whisper check
+        let input = Input {
+            source: Source::File(PathBuf::from("test.wav")),
+            content_type: "audio/wav".to_string(),
+            data: b"fake wav".to_vec(),
+        };
+        // whisper check will fail because mock binary is missing
+        let ext = AudioVideoExtractor::with_runner(Box::new(
+            MockCommandRunner::new().with_binary_missing(),
+        ));
+        let err = ext.extract(&input).await.unwrap_err();
+        assert!(err.to_string().contains("not found"));
     }
 }

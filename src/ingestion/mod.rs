@@ -155,34 +155,45 @@ pub async fn process(input: Input, config: ChunkConfig) -> anyhow::Result<Vec<Ch
 
     // Process each raw doc (one per page for PDFs, one overall for others)
     // through clean → chunk → metadata attach, then flatten.
+    //
+    // chunk_index and total_chunks are global across all pages so that
+    // multi-page PDFs produce a contiguous index range.
     let mut result: Vec<Chunk> = Vec::new();
+    let mut global_index: usize = 0;
     for raw_doc in &raw_docs {
         let cleaned = cleaner::clean(&raw_doc.text);
         let chunks = chunker::chunk(&cleaned, &config);
-        let total = chunks.len();
 
         let mut page_chunks: Vec<Chunk> = chunks
             .into_iter()
-            .enumerate()
-            .map(|(i, text)| {
+            .map(|text| {
                 let meta = ChunkMetadata::new(
                     &resolved_input.source,
                     extractor.name(),
-                    i,
-                    total,
+                    global_index,
+                    // total_chunks is set below after we know the full count
+                    0,
                 );
-                Chunk {
+                let chunk = Chunk {
                     text,
                     metadata: ChunkMetadata {
                         page: raw_doc.page,
                         timestamp_range: raw_doc.timestamp_range,
                         ..meta
                     },
-                }
+                };
+                global_index += 1;
+                chunk
             })
             .collect();
 
         result.append(&mut page_chunks);
+    }
+
+    // Fix total_chunks now that we know the global count
+    let total = result.len();
+    for chunk in &mut result {
+        chunk.metadata.total_chunks = total;
     }
 
     // De-duplicate: skip empty or duplicate chunks
@@ -397,5 +408,76 @@ mod tests {
             "error should mention the cap, got: {msg}"
         );
         mock.assert_async().await;
+    }
+
+    // -----------------------------------------------------------------------
+    // refine_content_type with extensionless URL
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_refine_content_type_extensionless_url() {
+        let input = Input {
+            source: Source::Url("https://example.com/data".to_string()),
+            content_type: "application/octet-stream".to_string(),
+            data: Vec::new(),
+        };
+        let refined = refine_content_type(&input);
+        assert_eq!(refined, "application/octet-stream");
+    }
+
+    // -----------------------------------------------------------------------
+    // detect_repeated_lines / clean_with_footer_strip substring false-positive
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_clean_with_footer_strip_substring_no_false_positive() {
+        let text = "Page\nImportant: Page settings should not be removed.\nFooter\n\
+                     Page\nMore body content about page layout.\nFooter";
+        let mut repeated = std::collections::HashSet::new();
+        repeated.insert("Page".to_string());
+        repeated.insert("Footer".to_string());
+        let result = cleaner::clean_with_footer_strip(text, &repeated);
+        assert!(!result.contains("Page\nImportant"), "header 'Page' should be stripped");
+        assert!(
+            result.contains("page settings") || result.contains("page layout"),
+            "body lines containing 'page' as substring must survive"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Concurrent process() calls
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_process_concurrent_text_inputs() {
+        let text_a = "Concurrent chunk A. ".repeat(100);
+        let text_b = "Concurrent chunk B. ".repeat(100);
+        let input_a = Input {
+            source: Source::Text(text_a.clone()),
+            content_type: "text/plain".to_string(),
+            data: text_a.as_bytes().to_vec(),
+        };
+        let input_b = Input {
+            source: Source::Text(text_b.clone()),
+            content_type: "text/plain".to_string(),
+            data: text_b.as_bytes().to_vec(),
+        };
+        let config = ChunkConfig {
+            chunk_size: 256,
+            overlap: 32,
+            mode: ChunkMode::SlidingWindow,
+        };
+
+        let (res_a, res_b) = tokio::join!(
+            process(input_a, config.clone()),
+            process(input_b, config),
+        );
+        let chunks_a = res_a.unwrap();
+        let chunks_b = res_b.unwrap();
+
+        assert!(!chunks_a.is_empty());
+        assert!(!chunks_b.is_empty());
+        assert!(chunks_a[0].text.contains("Concurrent chunk A"));
+        assert!(chunks_b[0].text.contains("Concurrent chunk B"));
     }
 }
