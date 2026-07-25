@@ -46,7 +46,7 @@ pub struct RawDoc {
 /// run subprocesses, or call native library functions without blocking the
 /// caller.
 #[async_trait]
-pub trait Extractor: Send + Sync + std::fmt::Debug {
+pub trait Extractor: Send + Sync {
     /// Return the extractor name (e.g. `"pdf"`, `"plaintext"`).
     fn name(&self) -> &'static str;
 
@@ -577,7 +577,10 @@ mod tests {
 
     #[test]
     fn test_dispatcher_unsupported() {
-        let err = dispatcher("application/x-foobar").unwrap_err();
+        let err = match dispatcher("application/x-foobar") {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
         assert!(err.to_string().contains("unsupported"));
     }
 
