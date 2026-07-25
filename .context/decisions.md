@@ -80,3 +80,10 @@
   - Overlap is computed per-page, never crossing a page boundary. This is correct for provenance but may lose inter-page context. Acceptable tradeoff — we can add a "merge adjacent small pages" step later if needed.
   - Cleaner runs once per page instead of once per document. Negligible cost.
   - 3 new unit tests validate the form-feed split algorithm. 134 tests pass.
+
+### 2026-07-25: Sliding-window chunker Vec<char> alloc — acknowledged, unchanged
+- **Observation**: `chunk_sliding_window` collects the whole document into `Vec<char>` (O(n) heap alloc).
+- **Assessment**: Cost is ~16 KB per 4K tokens. For book-length PDFs or hours of transcribed audio (500K+ chars) it could matter, but typical ingestion inputs are well below that threshold.
+- **Fix available**: Replace with `char_indices()` byte-range slicing to read directly from `&str` without intermediate Vec.
+- **Decision (deferred)**: Not worth touching now. Fix if the chunker becomes a measured bottleneck in Phase 4 performance work.
+
