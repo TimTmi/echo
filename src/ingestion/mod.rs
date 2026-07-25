@@ -90,7 +90,20 @@ impl ChunkMetadata {
 /// Returns an error if the extractor for the given content type is not found,
 /// the extraction itself fails, the HTTP fetch fails, or any required system
 /// dependency is missing.
+/// Format the input source for log messages.
+fn source_display(input: &Input) -> String {
+    match &input.source {
+        Source::File(p) => p.to_string_lossy().to_string(),
+        Source::Url(u) => u.clone(),
+        Source::Text(_) => "<text input>".to_string(),
+    }
+}
+
 pub async fn process(input: Input, config: ChunkConfig) -> anyhow::Result<Vec<Chunk>> {
+    let src = source_display(&input);
+    tracing::info!("ingestion pipeline starting: source={src}, content_type={}, chunk_size={}, overlap={}, mode={:?}",
+        input.content_type, config.chunk_size, config.overlap, config.mode);
+
     // Resolve URLs by fetching content
     let resolved_input = match &input.source {
         Source::Url(url) => {
@@ -198,7 +211,11 @@ pub async fn process(input: Input, config: ChunkConfig) -> anyhow::Result<Vec<Ch
 
     // De-duplicate: skip empty or duplicate chunks
     result.dedup_by(|a, b| a.text == b.text);
+    let before_dedup = result.len();
     result.retain(|c| !c.text.trim().is_empty());
+    let after_dedup = result.len();
+
+    tracing::info!("ingestion pipeline finished: {src} -> {} chunks ({} empty/duplicate removed)", after_dedup, before_dedup - after_dedup);
 
     Ok(result)
 }

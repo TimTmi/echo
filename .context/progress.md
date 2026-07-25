@@ -60,6 +60,16 @@
 
 - **New ingestion tests (2026-07-25)**: 4 added — `test_refine_content_type_extensionless_url` (mod.rs), `test_clean_with_footer_strip_substring_no_false_positive` (mod.rs), `test_process_concurrent_text_inputs` (mod.rs, `tokio::join!` two plain-text pipelines). 154/154 tests pass.
 
+- **Tracing/logging added to ingestion pipeline (2026-07-26)**: Added `tracing::info!` / `tracing::debug!` / `tracing::warn!` calls across all 4 ingestion modules. Specific trace points:
+  - `RealCommandRunner::check_binary` — logs binary name + version on find, warns on non-zero exit
+  - `RealCommandRunner::run_to_stdout` / `run_to_file` — debug-level logs before/after each subprocess invocation
+  - `PdfExtractor::extract` — info with page count and total chars extracted
+  - `ImageExtractor::extract` — info with OCR char count
+  - `AudioVideoExtractor::extract` — info for ffmpeg conversion (WAV byte size), whisper transcription (char count), and salvaged partial output (warn)
+  - `process()` — info with source, content_type, chunk config at start; info with chunk count and dedup stats at finish
+  - `Config` struct gained `whisper_model_path: Option<String>` field for future use
+  - `AudioVideoExtractor::resolve_whisper_model()` replaces one-liner default: env var `WHISPER_MODEL_PATH` → platform data dir (`%APPDATA%/echo/models/ggml-base.en.bin` on Windows, `~/.local/share/echo/models/ggml-base.en.bin` on Unix) → CWD fallback with warning. `tracing` crate already a dep. 154/154 tests pass.
+
 ## In Progress
 - None
 

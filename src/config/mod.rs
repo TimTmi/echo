@@ -13,6 +13,7 @@ pub struct Config {
     pub embedding_url: String,
     pub default_collection: Option<String>,
     pub embedding_model: String,
+    pub whisper_model_path: Option<String>,
 }
 
 impl Default for Config {
@@ -22,6 +23,7 @@ impl Default for Config {
             embedding_url: "http://localhost:8080/v1/embeddings".to_string(),
             default_collection: None,
             embedding_model: "BGE-M3".to_string(),
+            whisper_model_path: None,
         }
     }
 }

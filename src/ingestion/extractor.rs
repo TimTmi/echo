@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use async_trait::async_trait;
 use tempfile::TempDir;
+use tracing;
 
 // ---------------------------------------------------------------------------
 // CommandRunner trait — injectable for testing subprocess-based extractors
@@ -40,14 +41,17 @@ pub struct RealCommandRunner;
 
 impl CommandRunner for RealCommandRunner {
     fn run_to_stdout(&self, binary: &str, args: &[&str]) -> anyhow::Result<Vec<u8>> {
+        tracing::debug!("running {} with {} arg(s)", binary, args.len());
         let output = std::process::Command::new(binary)
             .args(args)
             .output()
             .with_context(|| format!("failed to run {binary}"))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!("{} exited with non-zero status; stderr: {}", binary, stderr.trim());
             anyhow::bail!("{binary} failed: {stderr}");
         }
+        tracing::debug!("{} returned {} bytes on stdout", binary, output.stdout.len());
         Ok(output.stdout)
     }
 
@@ -57,16 +61,20 @@ impl CommandRunner for RealCommandRunner {
         args: &[&str],
         output_path: &Path,
     ) -> anyhow::Result<Vec<u8>> {
+        tracing::debug!("running {} {} arg(s) -> {:?}", binary, args.len(), output_path);
         let output = std::process::Command::new(binary)
             .args(args)
             .output()
             .with_context(|| format!("failed to run {binary}"))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!("{} exited with non-zero status; stderr: {}", binary, stderr.trim());
             anyhow::bail!("{binary} failed: {stderr}");
         }
-        std::fs::read(output_path)
-            .with_context(|| format!("failed to read {binary} output file"))
+        let content = std::fs::read(output_path)
+            .with_context(|| format!("failed to read {binary} output file"))?;
+        tracing::debug!("{} wrote {} bytes to {:?}", binary, content.len(), output_path);
+        Ok(content)
     }
 
     fn check_binary(&self, binary: &str, install_hint: &str) -> anyhow::Result<()> {
@@ -75,8 +83,11 @@ impl CommandRunner for RealCommandRunner {
             .output()
             .with_context(|| format!("{binary} not found. {install_hint}"))?;
         if !output.status.success() {
+            tracing::warn!("{} --version returned non-zero; stderr: {}", binary, String::from_utf8_lossy(&output.stderr));
             anyhow::bail!("{binary} --version returned non-zero status");
         }
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        tracing::info!("{} found: {}", binary, version);
         Ok(())
     }
 }
@@ -383,6 +394,7 @@ impl Extractor for PdfExtractor {
             .collect();
 
         if pages.is_empty() {
+            tracing::info!("pdftotext extracted text but no pages found (no form-feed separators)");
             return Ok(vec![RawDoc {
                 text: text.clone(),
                 page: None,
@@ -391,6 +403,7 @@ impl Extractor for PdfExtractor {
             }]);
         }
 
+        tracing::info!("pdftotext extracted {} pages, {} total chars", pages.len(), text.len());
         Ok(pages.into_iter().enumerate().map(|(i, page_text)| {
             RawDoc {
                 text: page_text.trim().to_string(),
@@ -542,6 +555,13 @@ impl Extractor for ImageExtractor {
         )?;
 
         let text = String::from_utf8_lossy(&stdout).to_string();
+        let trimmed = text.trim();
+        let src = match &input.source {
+            Source::File(p) => p.to_string_lossy().to_string(),
+            Source::Url(u) => u.clone(),
+            Source::Text(_) => "<text input>".to_string(),
+        };
+        tracing::info!("tesseract OCR extracted {} chars from {}", trimmed.len(), src);
 
         Ok(vec![RawDoc {
             text,
@@ -589,6 +609,57 @@ impl AudioVideoExtractor {
     fn whisper_cli() -> String {
         std::env::var("WHISPER_CLI").unwrap_or_else(|_| "whisper-cli".to_string())
     }
+
+    /// Resolve the path to the whisper model file.
+    ///
+    /// Priority (first wins):
+    /// 1. `WHISPER_MODEL_PATH` env var
+    /// 2. Platform-specific data directory:
+    ///    - Windows: `%APPDATA%/echo/models/ggml-base.en.bin`
+    ///    - Unix:    `$XDG_DATA_HOME/echo/models/ggml-base.en.bin`
+    ///               (defaults to `~/.local/share/echo/models/ggml-base.en.bin`)
+    /// 3. CWD fallback: `models/ggml-base.en.bin` (with a warning since it's fragile)
+    fn resolve_whisper_model() -> String {
+        // Priority 1: explicit env var
+        if let Ok(path) = std::env::var("WHISPER_MODEL_PATH") {
+            if !path.is_empty() {
+                return path;
+            }
+        }
+
+        // Priority 2: platform data directory
+        let data_dir = if cfg!(target_os = "windows") {
+            std::env::var("APPDATA")
+                .ok()
+                .map(|a| PathBuf::from(a).join("echo"))
+        } else {
+            std::env::var("XDG_DATA_HOME")
+                .ok()
+                .map(|x| PathBuf::from(x).join("echo"))
+                .or_else(|| {
+                    std::env::var("HOME")
+                        .ok()
+                        .map(|h| PathBuf::from(h).join(".local").join("share").join("echo"))
+                })
+        };
+
+        if let Some(dir) = data_dir {
+            let model = dir.join("models").join("ggml-base.en.bin");
+            if model.exists() {
+                return model.to_string_lossy().to_string();
+            }
+        }
+
+        // Priority 3: CWD fallback (fragile but preserves current behavior)
+        let cwd_fallback = PathBuf::from("models").join("ggml-base.en.bin");
+        tracing::warn!(
+            "WHISPER_MODEL_PATH not set; falling back to CWD-relative path {:?}. \
+             Set WHISPER_MODEL_PATH to a model file, or place the model at the \
+             platform data directory.",
+            cwd_fallback
+        );
+        cwd_fallback.to_string_lossy().to_string()
+    }
 }
 
 #[async_trait]
@@ -628,8 +699,10 @@ impl Extractor for AudioVideoExtractor {
 
         // Convert to WAV if needed
         let wav_data = if extension == "wav" {
+            tracing::info!("audio is already WAV format, skipping ffmpeg conversion");
             input.data.clone()
         } else {
+            tracing::info!("converting audio/video (.{}) to WAV via ffmpeg", extension);
             self.runner.check_binary(
                 "ffmpeg",
                 "Install ffmpeg (e.g. `apt install ffmpeg` on Debian/Ubuntu, \
@@ -643,7 +716,7 @@ impl Extractor for AudioVideoExtractor {
             let out_path = tmp.path().join(&out_name);
             write_temp_file(tmp.path(), &in_name, &input.data)?;
 
-            self.runner.run_to_file(
+            let wav = self.runner.run_to_file(
                 "ffmpeg",
                 &[
                     "-y",
@@ -658,18 +731,18 @@ impl Extractor for AudioVideoExtractor {
                     out_path.to_str().unwrap(),
                 ],
                 &out_path,
-            )?
+            )?;
+            tracing::info!("ffmpeg produced {} bytes of WAV audio", wav.len());
+            wav
         };
-
-        // Write WAV for whisper and transcribe
         let tmp = make_temp_dir()?;
         let wav_name = "input.wav".to_string();
         let wav_path = tmp.path().join(&wav_name);
         write_temp_file(tmp.path(), &wav_name, &wav_data)?;
 
-        let model_path = std::env::var("WHISPER_MODEL_PATH")
-            .unwrap_or_else(|_| "models/ggml-base.en.bin".to_string());
+        let model_path = Self::resolve_whisper_model();
 
+        tracing::info!("transcribing via {} with model {}", Self::whisper_cli(), model_path);
         let cli = Self::whisper_cli();
         let output = std::process::Command::new(&cli)
             .arg("-m")
@@ -702,6 +775,7 @@ impl Extractor for AudioVideoExtractor {
                     salvaged: true,
                 }]);
             }
+            tracing::warn!("whisper transcription failed: {}", stderr.trim());
             anyhow::bail!("whisper transcription failed: {stderr}");
         }
 
@@ -709,9 +783,11 @@ impl Extractor for AudioVideoExtractor {
         let txt_path = tmp.path().join("output.txt");
         let text = std::fs::read_to_string(&txt_path)
             .context("whisper completed but output .txt not found")?;
+        let trimmed = text.trim();
+        tracing::info!("whisper transcribed {} chars", trimmed.len());
 
         Ok(vec![RawDoc {
-            text: text.trim().to_string(),
+            text: trimmed.to_string(),
             page: None,
             timestamp_range: None,
             salvaged: false,

@@ -764,6 +764,7 @@ mod tests {
             embedding_url: "http://e/v1/embeddings".into(),
             default_collection: Some("general".into()),
             embedding_model: "BGE-M3".into(),
+            whisper_model_path: None,
         });
 
         assert!(app.handle_key_press(KeyCode::Char('s'), KeyModifiers::NONE));
