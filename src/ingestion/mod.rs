@@ -29,6 +29,10 @@ use anyhow::Context;
 use extractor::{Input, Source};
 use chunker::ChunkConfig;
 
+/// Maximum number of bytes to download when fetching a URL.
+/// Content exceeding this limit is rejected to prevent runaway memory use.
+const MAX_DOWNLOAD_SIZE: usize = 100 * 1024 * 1024; // 100 MiB
+
 /// A single processed chunk ready for embedding.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chunk {
@@ -106,6 +110,19 @@ pub async fn process(input: Input, config: ChunkConfig) -> anyhow::Result<Vec<Ch
                     url
                 );
             }
+            // Reject oversized downloads before reading the body
+            if let Some(cl) = response
+                .headers()
+                .get(reqwest::header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<usize>().ok())
+            {
+                if cl > MAX_DOWNLOAD_SIZE {
+                    anyhow::bail!(
+                        "Content-Length {cl} exceeds maximum download size of {MAX_DOWNLOAD_SIZE} bytes"
+                    );
+                }
+            }
             let content_type = response
                 .headers()
                 .get(reqwest::header::CONTENT_TYPE)
@@ -113,6 +130,13 @@ pub async fn process(input: Input, config: ChunkConfig) -> anyhow::Result<Vec<Ch
                 .unwrap_or("text/plain")
                 .to_string();
             let bytes = response.bytes().await.context("failed to read response body")?;
+            if bytes.len() > MAX_DOWNLOAD_SIZE {
+                // Use byte length vs alloc length after reading to catch chunked / no-CL cases
+                anyhow::bail!(
+                    "Downloaded {} bytes exceeds maximum download size of {MAX_DOWNLOAD_SIZE} bytes",
+                    bytes.len()
+                );
+            }
             Input {
                 source: input.source.clone(),
                 content_type,
@@ -296,5 +320,82 @@ mod tests {
         };
         let refined = refine_content_type(&input);
         assert_eq!(refined, "application/octet-stream");
+    }
+
+    // ---------------------------------------------------------------------------
+    // Download size cap tests
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_download_rejects_oversized_content_length() {
+        let mut server = mockito::Server::new_async().await;
+        // Body exactly 1 byte over the cap with matching Content-Length header.
+        // hyper validates header-body agreement, so the body must match the header.
+        let big_body = vec![b'x'; MAX_DOWNLOAD_SIZE + 1];
+        let mock = server
+            .mock("GET", "/big-file")
+            .with_status(200)
+            .with_header("Content-Type", "text/plain")
+            .with_header("Content-Length", &format!("{}", MAX_DOWNLOAD_SIZE + 1))
+            .with_body(&big_body)
+            .create_async()
+            .await;
+
+        let url = format!("{}/big-file", server.url());
+        let input = Input {
+            source: Source::Url(url),
+            content_type: "text/plain".to_string(),
+            data: Vec::new(),
+        };
+        let config = ChunkConfig {
+            chunk_size: 256,
+            overlap: 32,
+            mode: ChunkMode::SlidingWindow,
+        };
+
+        let result = process(input, config).await;
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("exceeds maximum download size"),
+            "error should mention the cap, got: {msg}"
+        );
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_download_rejects_oversized_body_no_content_length() {
+        let mut server = mockito::Server::new_async().await;
+        // Build a body larger than MAX_DOWNLOAD_SIZE
+        let big_body = vec![b'x'; MAX_DOWNLOAD_SIZE + 1];
+        let mock = server
+            .mock("GET", "/big-body")
+            .with_status(200)
+            .with_header("Content-Type", "text/plain")
+            // Omit Content-Length to simulate chunked transfer
+            .with_body(&big_body)
+            .create_async()
+            .await;
+
+        let url = format!("{}/big-body", server.url());
+        let input = Input {
+            source: Source::Url(url),
+            content_type: "text/plain".to_string(),
+            data: Vec::new(),
+        };
+        let config = ChunkConfig {
+            chunk_size: 256,
+            overlap: 32,
+            mode: ChunkMode::SlidingWindow,
+        };
+
+        let result = process(input, config).await;
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("exceeds maximum download size"),
+            "error should mention the cap, got: {msg}"
+        );
+        mock.assert_async().await;
     }
 }

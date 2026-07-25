@@ -52,6 +52,8 @@
 
 - **PDF per-page chunk tagging (2026-07-25)**: Changed `Extractor::extract` return type from `RawDoc` to `Vec<RawDoc>`. All 6 extractors updated (non-PDF wrap single doc in `vec![]`). `PdfExtractor::extract` now splits `pdftotext` output on `\x0C` (form-feed) and returns one `RawDoc` per page with correct 0-based `page` number. `process()` iterates per-page docs through clean→chunk, stamping each chunk with its page number from the source `RawDoc`. All 134 tests pass. Added 3 form-feed split tests and updated 2 extractor tests for `Vec<RawDoc>` API.
 
+- **Download size cap for URL ingestion (2026-07-26)**: `response.bytes().await` in `mod.rs` had no size limit, risking OOM on multi-GB URLs. Added `Content-Length` header check before reading body (rejects > 100 MiB). Added post-read `bytes.len()` check for chunked/no-CL responses. Const `MAX_DOWNLOAD_SIZE = 100 * 1024 * 1024` at module level. 2 new regression tests with mockito: `test_download_rejects_oversized_content_length` (matching body + CL) and `test_download_rejects_oversized_body_no_content_length` (chunked, no CL). 136/136 tests pass.
+
 ## In Progress
 - None
 
