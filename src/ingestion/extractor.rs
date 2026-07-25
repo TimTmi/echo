@@ -10,6 +10,12 @@ use anyhow::Context;
 use async_trait::async_trait;
 use tempfile::TempDir;
 
+/// Maximum bytes for file-based inputs (DOCX, PDF, images, audio/video).
+/// Files exceeding this limit are rejected before any extraction work.
+/// Matches [`MAX_DOWNLOAD_SIZE`](crate::ingestion::MAX_DOWNLOAD_SIZE) in
+/// `mod.rs` to keep a consistent pipeline-wide cap.
+pub(crate) const MAX_FILE_SIZE: usize = 100 * 1024 * 1024; // 100 MiB
+
 /// Input to the ingestion pipeline.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Input {
@@ -195,6 +201,13 @@ impl Extractor for PdfExtractor {
     }
 
     async fn extract(&self, input: &Input) -> anyhow::Result<Vec<RawDoc>> {
+        if input.data.len() > MAX_FILE_SIZE {
+            anyhow::bail!(
+                "PDF file size ({} bytes) exceeds maximum allowed ({} bytes)",
+                input.data.len(),
+                MAX_FILE_SIZE,
+            );
+        }
         check_binary(
             "pdftotext",
             "Install poppler-utils (e.g. `apt install poppler-utils` on Debian/Ubuntu, \
@@ -261,6 +274,13 @@ impl Extractor for DocxExtractor {
     }
 
     async fn extract(&self, input: &Input) -> anyhow::Result<Vec<RawDoc>> {
+        if input.data.len() > MAX_FILE_SIZE {
+            anyhow::bail!(
+                "DOCX file size ({} bytes) exceeds maximum allowed ({} bytes)",
+                input.data.len(),
+                MAX_FILE_SIZE,
+            );
+        }
         let doc = docx_rs::read_docx(&input.data)
             .map_err(|e| anyhow::anyhow!("failed to parse DOCX: {e}"))?;
 
@@ -335,6 +355,13 @@ impl Extractor for ImageExtractor {
     }
 
     async fn extract(&self, input: &Input) -> anyhow::Result<Vec<RawDoc>> {
+        if input.data.len() > MAX_FILE_SIZE {
+            anyhow::bail!(
+                "Image file size ({} bytes) exceeds maximum allowed ({} bytes)",
+                input.data.len(),
+                MAX_FILE_SIZE,
+            );
+        }
         check_binary(
             "tesseract",
             "Install Tesseract OCR (e.g. `apt install tesseract-ocr` on Debian/Ubuntu, \
@@ -407,6 +434,13 @@ impl Extractor for AudioVideoExtractor {
     }
 
     async fn extract(&self, input: &Input) -> anyhow::Result<Vec<RawDoc>> {
+        if input.data.len() > MAX_FILE_SIZE {
+            anyhow::bail!(
+                "Audio/video file size ({} bytes) exceeds maximum allowed ({} bytes)",
+                input.data.len(),
+                MAX_FILE_SIZE,
+            );
+        }
         Self::check_whisper()?;
 
         let extension = match &input.source {
@@ -680,5 +714,68 @@ mod tests {
         let pages: Vec<&str> = pages.into_iter().filter(|p| !p.is_empty()).collect();
 
         assert_eq!(pages.len(), 0, "empty text should produce zero pages");
+    }
+
+    // ---------------------------------------------------------------------------
+    // File size guard tests
+    // ---------------------------------------------------------------------------
+
+    /// Build an input with data exceeding MAX_FILE_SIZE.
+    fn oversized_input(content_type: &str) -> Input {
+        Input {
+            source: Source::File(PathBuf::from("oversized.bin")),
+            content_type: content_type.to_string(),
+            data: vec![0u8; super::MAX_FILE_SIZE + 1],
+        }
+    }
+
+    #[tokio::test]
+    async fn test_docx_rejects_oversized() {
+        let input = oversized_input(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        );
+        let ext = DocxExtractor;
+        let err = ext.extract(&input).await.unwrap_err();
+        assert!(err.to_string().contains("exceeds maximum allowed"));
+    }
+
+    #[tokio::test]
+    async fn test_docx_accepts_normal_size() {
+        // Without a guard, a normal DOCX mock would need real DOCX bytes.
+        // Just verify that data at MAX_FILE_SIZE passes the guard for docx.
+        // (docx_rs will then fail with a parse error, which is fine.)
+        let input = Input {
+            source: Source::File(PathBuf::from("normal.docx")),
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                .to_string(),
+            data: vec![0u8; 1], // well under limit
+        };
+        let ext = DocxExtractor;
+        let err = ext.extract(&input).await.unwrap_err();
+        assert!(!err.to_string().contains("exceeds maximum allowed"));
+    }
+
+    #[tokio::test]
+    async fn test_pdf_rejects_oversized() {
+        let input = oversized_input("application/pdf");
+        let ext = PdfExtractor;
+        let err = ext.extract(&input).await.unwrap_err();
+        assert!(err.to_string().contains("exceeds maximum allowed"));
+    }
+
+    #[tokio::test]
+    async fn test_image_rejects_oversized() {
+        let input = oversized_input("image/png");
+        let ext = ImageExtractor;
+        let err = ext.extract(&input).await.unwrap_err();
+        assert!(err.to_string().contains("exceeds maximum allowed"));
+    }
+
+    #[tokio::test]
+    async fn test_audio_rejects_oversized() {
+        let input = oversized_input("audio/mp3");
+        let ext = AudioVideoExtractor;
+        let err = ext.extract(&input).await.unwrap_err();
+        assert!(err.to_string().contains("exceeds maximum allowed"));
     }
 }
