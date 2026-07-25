@@ -156,6 +156,44 @@ impl Extractor for PdfExtractor {
 // DOCX extractor (docx-rs)
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
+struct DocxExtractor;
+
+#[async_trait]
+impl Extractor for DocxExtractor {
+    fn name(&self) -> &'static str {
+        "docx"
+    }
+
+    async fn extract(&self, input: &Input) -> anyhow::Result<RawDoc> {
+        let doc = docx_rs::read_docx(&input.data)
+            .map_err(|e| anyhow::anyhow!("failed to parse DOCX: {e}"))?;
+
+        let mut text = String::new();
+        for child in &doc.document.children {
+            if let docx_rs::DocumentChild::Paragraph(p) = child {
+                for p_child in &p.children {
+                    if let docx_rs::ParagraphChild::Run(r) = p_child {
+                        for r_child in &r.children {
+                            if let docx_rs::RunChild::Text(t) = r_child {
+                                text.push_str(&t.text);
+                            }
+                        }
+                        text.push(' ');
+                    }
+                }
+                text.push('\n');
+            }
+        }
+
+        Ok(RawDoc {
+            text,
+            page: None,
+            timestamp_range: None,
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // HTML extractor (reqwest + html2text)
 // ---------------------------------------------------------------------------
@@ -343,44 +381,6 @@ impl AudioVideoExtractor {
         let wav_data = std::fs::read(&output_path).context("failed to read WAV output")?;
         let _ = std::fs::remove_file(&output_path);
         Ok(wav_data)
-    }
-}
-
-#[derive(Debug)]
-struct DocxExtractor;
-
-#[async_trait]
-impl Extractor for DocxExtractor {
-    fn name(&self) -> &'static str {
-        "docx"
-    }
-
-    async fn extract(&self, input: &Input) -> anyhow::Result<RawDoc> {
-        let doc = docx_rs::read_docx(&input.data)
-            .map_err(|e| anyhow::anyhow!("failed to parse DOCX: {e}"))?;
-
-        let mut text = String::new();
-        for child in &doc.document.children {
-            if let docx_rs::DocumentChild::Paragraph(p) = child {
-                for p_child in &p.children {
-                    if let docx_rs::ParagraphChild::Run(r) = p_child {
-                        for r_child in &r.children {
-                            if let docx_rs::RunChild::Text(t) = r_child {
-                                text.push_str(&t.text);
-                            }
-                        }
-                        text.push(' ');
-                    }
-                }
-                text.push('\n');
-            }
-        }
-
-        Ok(RawDoc {
-            text,
-            page: None,
-            timestamp_range: None,
-        })
     }
 }
 
