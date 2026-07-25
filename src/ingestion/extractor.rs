@@ -38,6 +38,10 @@ pub struct RawDoc {
     pub page: Option<u32>,
     /// Timestamp range in seconds for audio/video.
     pub timestamp_range: Option<(f64, f64)>,
+    /// `true` when text was salvaged from a failed subprocess (e.g. whisper
+    /// exited non-zero but wrote partial output). Downstream code can use this
+    /// to flag the content as potentially incomplete or garbage.
+    pub salvaged: bool,
 }
 
 /// Common trait for all format extractors.
@@ -85,6 +89,7 @@ impl Extractor for PlainTextExtractor {
             text,
             page: None,
             timestamp_range: None,
+            salvaged: false,
         }])
     }
 }
@@ -227,6 +232,7 @@ impl Extractor for PdfExtractor {
                 text: text.clone(),
                 page: None,
                 timestamp_range: None,
+                salvaged: false,
             }]);
         }
 
@@ -235,6 +241,7 @@ impl Extractor for PdfExtractor {
                 text: page_text.trim().to_string(),
                 page: Some(i as u32),
                 timestamp_range: None,
+                salvaged: false,
             }
         }).collect())
     }
@@ -278,6 +285,7 @@ impl Extractor for DocxExtractor {
             text,
             page: None,
             timestamp_range: None,
+            salvaged: false,
         }])
     }
 }
@@ -308,6 +316,7 @@ impl Extractor for HtmlExtractor {
             text,
             page: None,
             timestamp_range: None,
+            salvaged: false,
         }])
     }
 }
@@ -355,6 +364,7 @@ impl Extractor for ImageExtractor {
             text,
             page: None,
             timestamp_range: None,
+            salvaged: false,
         }])
     }
 }
@@ -476,13 +486,22 @@ impl Extractor for AudioVideoExtractor {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            // Try reading the .txt output file as fallback
+            // Try reading the .txt output file as fallback: whisper.cpp sometimes
+            // writes partial output and then exits non-zero (e.g. early audio end).
+            // Flag the result as salvaged so downstream code can treat it as
+            // potentially incomplete.
             let txt_path = tmp.path().join("output.txt");
             if let Ok(text) = std::fs::read_to_string(&txt_path) {
+                tracing::warn!(
+                    "whisper exited with non-zero status but partial output found ({} bytes); \
+                     result flagged as salvaged",
+                    text.len()
+                );
                 return Ok(vec![RawDoc {
                     text: text.trim().to_string(),
                     page: None,
                     timestamp_range: None,
+                    salvaged: true,
                 }]);
             }
             anyhow::bail!("whisper transcription failed: {stderr}");
@@ -497,6 +516,7 @@ impl Extractor for AudioVideoExtractor {
             text: text.trim().to_string(),
             page: None,
             timestamp_range: None,
+            salvaged: false,
         }])
     }
 }
