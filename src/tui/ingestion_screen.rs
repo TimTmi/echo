@@ -354,7 +354,7 @@ impl IngestionScreen {
                 payload.insert("chunk_index".to_string(), serde_json::Value::Number(serde_json::Number::from(chunk.metadata.chunk_index as u64)));
                 payload.insert("total_chunks".to_string(), serde_json::Value::Number(serde_json::Number::from(chunk.metadata.total_chunks as u64)));
 
-                let id = serde_json::Value::Number(serde_json::Number::from(chunk.metadata.chunk_index as u64));
+                let id = serde_json::Value::String(uuid::Uuid::new_v4().to_string());
                 let point = UpsertPoint { id, vector, payload: Some(payload) };
                 let collection = if self.target_collection.is_empty() { "default" } else { &self.target_collection };
 

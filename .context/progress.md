@@ -76,6 +76,8 @@
 
 - **Tracing logs routed to file instead of stderr (2026-07-27)**: `tracing_subscriber::fmt()` previously wrote to stderr, which corrupted the TUI alternate screen display because ingestion tracing calls (info/debug/warn) bypassed the ratatui render loop and spilled directly onto the terminal. Changed to `with_writer(Mutex::new(log_file))` pointing at `echo.log` in CWD, with `with_ansi(false)` for clean file output. RUST_LOG env override still works. 157/157 tests pass.
 
+- **Point ID collision fix (2026-07-27)**: ingestion used `chunk_index` (0,1,2…) as Qdrant point ID. Each new ingestion run reused same IDs → `PUT /points` upsert replaced old points instead of appending. Changed to `uuid::Uuid::new_v4()` per point. Added `uuid` crate dep (v4-only). 157/157 tests pass.
+
 ## In Progress
 - None
 
