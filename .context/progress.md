@@ -72,6 +72,8 @@
 
 - **Chunker doc comment fix (2026-07-27)**: `ChunkConfig.chunk_size` and `ChunkConfig.overlap` doc comments claimed token-based sizing with `tiktoken-rs` fallback — neither was true. All sizes are character-based. Fixed module-level docs, field docs, and added a decision record (`decisions.md`) with rationale and path-to-tokenization if ever needed. No behavior change.
 
+- **Whisper transcription routed through CommandRunner (2026-07-27)**: Added `run_to_file_salvage` method to `CommandRunner` trait — returns `(exit_code, file_content, stderr)` regardless of exit status, enabling mock-driven tests of the salvage-on-failure path. Added `exit_code_salvage` field to `MockCommandRunner` so tests can have `check_whisper` pass (`exit_code=0`) while `run_to_file_salvage` fails independently. Refactored `AudioVideoExtractor::extract` whisper invocation (previously direct `std::process::Command::new`) to use `self.runner.run_to_file_salvage`. 3 new tests: `test_audio_transcription_success`, `test_audio_transcription_salvaged`, `test_audio_transcription_failed`. 157/157 tests pass.
+
 ## In Progress
 - None
 

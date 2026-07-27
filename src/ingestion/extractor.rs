@@ -31,6 +31,20 @@ pub trait CommandRunner: Send + Sync + std::fmt::Debug {
         output_path: &Path,
     ) -> anyhow::Result<Vec<u8>>;
 
+    /// Run `binary` with `args`, read the file at `output_path`, return
+    /// `(exit_code, file_content, stderr)` regardless of exit status.
+    ///
+    /// Unlike [`run_to_file`], this does **not** bail on non-zero exit — it
+    /// returns the exit code plus whatever was written to disk. Useful for
+    /// tools that may exit non-zero but still produce usable output (e.g.
+    /// whisper.cpp with early audio end).
+    fn run_to_file_salvage(
+        &self,
+        binary: &str,
+        args: &[&str],
+        output_path: &Path,
+    ) -> anyhow::Result<(i32, Vec<u8>, Vec<u8>)>;
+
     /// Check whether `binary` exists and can be invoked.
     fn check_binary(&self, binary: &str, install_hint: &str) -> anyhow::Result<()>;
 }
@@ -77,6 +91,35 @@ impl CommandRunner for RealCommandRunner {
         Ok(content)
     }
 
+    fn run_to_file_salvage(
+        &self,
+        binary: &str,
+        args: &[&str],
+        output_path: &Path,
+    ) -> anyhow::Result<(i32, Vec<u8>, Vec<u8>)> {
+        tracing::debug!(
+            "running {} {} arg(s) -> {:?} (salvage mode)",
+            binary,
+            args.len(),
+            output_path
+        );
+        let output = std::process::Command::new(binary)
+            .args(args)
+            .output()
+            .with_context(|| format!("failed to run {binary}"))?;
+        let exit_code = output.status.code().unwrap_or(-1);
+        let stderr = output.stderr;
+        let file_content = std::fs::read(output_path).unwrap_or_default();
+        tracing::debug!(
+            "{} exited with {}; {} bytes on disk, {} bytes stderr",
+            binary,
+            exit_code,
+            file_content.len(),
+            stderr.len()
+        );
+        Ok((exit_code, file_content, stderr))
+    }
+
     fn check_binary(&self, binary: &str, install_hint: &str) -> anyhow::Result<()> {
         let output = std::process::Command::new(binary)
             .arg("--version")
@@ -98,6 +141,13 @@ pub(crate) struct MockCommandRunner {
     pub(crate) stdout: Vec<u8>,
     pub(crate) stderr: Vec<u8>,
     pub(crate) exit_code: i32,
+    /// Override exit code for `run_to_file` / `run_to_file_salvage` only.
+    /// When set, `run_to_file` and `run_to_file_salvage` use this value
+    /// instead of `exit_code` (which is used by `run_to_stdout` /
+    /// `check_binary`). This lets tests have `check_whisper` pass (via
+    /// `exit_code=0`) while the transcription call fails (via
+    /// `exit_code_salvage=Some(1)`).
+    pub(crate) exit_code_salvage: Option<i32>,
     pub(crate) binary_missing: bool,
     pub(crate) output_file_content: Option<Vec<u8>>,
     pub(crate) output_file_missing: bool,
@@ -109,6 +159,7 @@ impl MockCommandRunner {
             stdout: Vec::new(),
             stderr: Vec::new(),
             exit_code: 0,
+            exit_code_salvage: None,
             binary_missing: false,
             output_file_content: None,
             output_file_missing: false,
@@ -118,6 +169,12 @@ impl MockCommandRunner {
     #[cfg(test)]
     pub(crate) fn with_exit_code(mut self, code: i32) -> Self {
         self.exit_code = code;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_exit_code_salvage(mut self, code: i32) -> Self {
+        self.exit_code_salvage = Some(code);
         self
     }
 
@@ -174,7 +231,8 @@ impl CommandRunner for MockCommandRunner {
         if self.binary_missing {
             anyhow::bail!("binary not found (mock)")
         }
-        if self.exit_code != 0 {
+        let ec = self.exit_code_salvage.unwrap_or(self.exit_code);
+        if ec != 0 {
             let stderr = String::from_utf8_lossy(&self.stderr);
             anyhow::bail!("{binary} failed: {stderr}");
         }
@@ -197,6 +255,31 @@ impl CommandRunner for MockCommandRunner {
             anyhow::bail!("binary not found. {install_hint}");
         }
         Ok(())
+    }
+
+    fn run_to_file_salvage(
+        &self,
+        binary: &str,
+        _args: &[&str],
+        output_path: &Path,
+    ) -> anyhow::Result<(i32, Vec<u8>, Vec<u8>)> {
+        if self.binary_missing {
+            anyhow::bail!("binary not found (mock)")
+        }
+        let ec = self.exit_code_salvage.unwrap_or(self.exit_code);
+        let stderr = self.stderr.clone();
+        if self.output_file_missing && ec != 0 {
+            // No output file + non-zero exit means total failure.
+            return Ok((ec, Vec::new(), stderr));
+        }
+        // Write mock content to the real temp file.
+        if let Some(content) = &self.output_file_content {
+            std::fs::write(output_path, content)
+                .with_context(|| format!("mock failed to write {binary} output"))?;
+            Ok((ec, content.clone(), stderr))
+        } else {
+            Ok((ec, Vec::new(), stderr))
+        }
     }
 }
 
@@ -744,30 +827,30 @@ impl Extractor for AudioVideoExtractor {
 
         tracing::info!("transcribing via {} with model {}", Self::whisper_cli(), model_path);
         let cli = Self::whisper_cli();
-        let output = std::process::Command::new(&cli)
-            .arg("-m")
-            .arg(&model_path)
-            .arg("-f")
-            .arg(&wav_path)
-            .arg("-otxt")   // output as plain text
-            .arg("-of")
-            .arg(tmp.path().join("output")) // output file prefix
-            .output()
-            .with_context(|| format!("failed to run whisper CLI '{cli}'"))?;
+        let txt_path = tmp.path().join("output.txt");
+        let (exit_code, file_bytes, stderr) = self.runner.run_to_file_salvage(
+            &cli,
+            &[
+                "-m",
+                &model_path,
+                "-f",
+                wav_path.to_str().unwrap(),
+                "-otxt",
+                "-of",
+                tmp.path().join("output").to_str().unwrap(),
+            ],
+            &txt_path,
+        )?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // Try reading the .txt output file as fallback: whisper.cpp sometimes
-            // writes partial output and then exits non-zero (e.g. early audio end).
-            // Flag the result as salvaged so downstream code can treat it as
-            // potentially incomplete.
-            let txt_path = tmp.path().join("output.txt");
-            if let Ok(text) = std::fs::read_to_string(&txt_path) {
+        if exit_code != 0 {
+            let stderr_str = String::from_utf8_lossy(&stderr);
+            if !file_bytes.is_empty() {
                 tracing::warn!(
-                    "whisper exited with non-zero status but partial output found ({} bytes); \
+                    "whisper exited with {exit_code} but partial output found ({} bytes); \
                      result flagged as salvaged",
-                    text.len()
+                    file_bytes.len()
                 );
+                let text = String::from_utf8_lossy(&file_bytes);
                 return Ok(vec![RawDoc {
                     text: text.trim().to_string(),
                     page: None,
@@ -775,14 +858,11 @@ impl Extractor for AudioVideoExtractor {
                     salvaged: true,
                 }]);
             }
-            tracing::warn!("whisper transcription failed: {}", stderr.trim());
-            anyhow::bail!("whisper transcription failed: {stderr}");
+            tracing::warn!("whisper transcription failed: {}", stderr_str.trim());
+            anyhow::bail!("whisper transcription failed: {stderr_str}");
         }
 
-        // whisper.cpp writes to output.txt alongside the prefix
-        let txt_path = tmp.path().join("output.txt");
-        let text = std::fs::read_to_string(&txt_path)
-            .context("whisper completed but output .txt not found")?;
+        let text = String::from_utf8_lossy(&file_bytes);
         let trimmed = text.trim();
         tracing::info!("whisper transcribed {} chars", trimmed.len());
 
@@ -1047,6 +1127,14 @@ mod tests {
         }
     }
 
+    fn wav_input() -> Input {
+        Input {
+            source: Source::File(PathBuf::from("test.wav")),
+            content_type: "audio/wav".to_string(),
+            data: b"fake wav".to_vec(),
+        }
+    }
+
     #[tokio::test]
     async fn test_pdf_binary_missing() {
         let ext = PdfExtractor::with_runner(Box::new(MockCommandRunner::new().with_binary_missing()));
@@ -1142,16 +1230,57 @@ mod tests {
     #[tokio::test]
     async fn test_audio_wav_passthrough() {
         // WAV input does not trigger ffmpeg, only whisper check
-        let input = Input {
-            source: Source::File(PathBuf::from("test.wav")),
-            content_type: "audio/wav".to_string(),
-            data: b"fake wav".to_vec(),
-        };
         // whisper check will fail because mock binary is missing
         let ext = AudioVideoExtractor::with_runner(Box::new(
             MockCommandRunner::new().with_binary_missing(),
         ));
-        let err = ext.extract(&input).await.unwrap_err();
+        let err = ext.extract(&wav_input()).await.unwrap_err();
         assert!(err.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_audio_transcription_success() {
+        // WAV input → skip ffmpeg → whisper via run_to_file_salvage
+        // exit_code=0 passes check_whisper; exit_code_salvage=None → uses exit_code=0 → success
+        let ext = AudioVideoExtractor::with_runner(Box::new(
+            MockCommandRunner::new()
+                .with_stdout(b"whisper help text") // for check_whisper
+                .with_output_file(b"Transcribed text."),
+        ));
+        let docs = ext.extract(&wav_input()).await.unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].text, "Transcribed text.");
+        assert!(!docs[0].salvaged);
+    }
+
+    #[tokio::test]
+    async fn test_audio_transcription_salvaged() {
+        // Whisper exits non-zero but wrote partial output
+        let ext = AudioVideoExtractor::with_runner(Box::new(
+            MockCommandRunner::new()
+                .with_stdout(b"whisper help text") // passes check_whisper
+                .with_exit_code_salvage(1)         // run_to_file_salvage returns non-zero
+                .with_stderr(b"early audio end")
+                .with_output_file(b"Partial transcribed text."),
+        ));
+        let docs = ext.extract(&wav_input()).await.unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].text, "Partial transcribed text.");
+        assert!(docs[0].salvaged);
+    }
+
+    #[tokio::test]
+    async fn test_audio_transcription_failed() {
+        // Whisper exits non-zero AND no output file → total failure
+        let ext = AudioVideoExtractor::with_runner(Box::new(
+            MockCommandRunner::new()
+                .with_stdout(b"whisper help text") // passes check_whisper
+                .with_exit_code_salvage(1)         // run_to_file_salvage returns non-zero
+                .with_stderr(b"model file not found")
+                .with_output_file_missing(),
+        ));
+        let err = ext.extract(&wav_input()).await.unwrap_err();
+        assert!(err.to_string().contains("whisper transcription failed"));
+        assert!(err.to_string().contains("model file not found"));
     }
 }
