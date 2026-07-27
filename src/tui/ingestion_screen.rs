@@ -492,24 +492,36 @@ impl IngestionScreen {
     }
 
     fn render_input_preview(&self, frame: &mut ratatui::Frame, area: Rect) {
-        let (input_title, preview) = match &self.state {
-            ScreenState::InputText { buffer, .. } => {
+        let (input_title, preview, cursor) = match &self.state {
+            ScreenState::InputText { buffer, cursor } => {
                 let txt = if buffer.is_empty() { " <type or paste text here>".to_string() } else { buffer[..buffer.len().min(500)].to_string() };
-                (" Text Input ", txt)
+                (" Text Input ", txt, *cursor)
             }
-            ScreenState::InputFilePath { buffer, .. } => {
-                if buffer.is_empty() { (" File Path ", " <enter file path>".to_string()) } else { (" File Path ", format!(" {}", buffer)) }
+            ScreenState::InputFilePath { buffer, cursor } => {
+                if buffer.is_empty() { (" File Path ", " <enter file path>".to_string(), *cursor) } else { (" File Path ", format!(" {}", buffer), *cursor) }
             }
-            ScreenState::InputUrl { buffer, .. } => {
-                if buffer.is_empty() { (" URL ", " <enter URL>".to_string()) } else { (" URL ", format!(" {}", buffer)) }
+            ScreenState::InputUrl { buffer, cursor } => {
+                if buffer.is_empty() { (" URL ", " <enter URL>".to_string(), *cursor) } else { (" URL ", format!(" {}", buffer), *cursor) }
             }
-            _ => (" Ready ", " Press [t]ext [f]ile [u]rl to start".to_string()),
+            _ => (" Ready ", " Press [t]ext [f]ile [u]rl to start".to_string(), 0),
         };
-        let paragraph = Paragraph::new(Line::from(Span::styled(preview, Style::default().fg(Color::White))))
+
+        let cursor_visible = matches!(
+            self.state,
+            ScreenState::InputText { .. } | ScreenState::InputFilePath { .. } | ScreenState::InputUrl { .. }
+        );
+
+        let paragraph = Paragraph::new(Line::from(Span::styled(&preview, Style::default().fg(Color::White))))
             .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
                 .title(input_title).title_alignment(Alignment::Left))
             .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, area);
+
+        if cursor_visible {
+            let cursor_x = area.x + 1 + cursor.min(preview.len()) as u16;
+            let cursor_y = area.y + 1;
+            frame.set_cursor_position(ratatui::layout::Position::new(cursor_x, cursor_y));
+        }
     }
 
     fn render_chunk_list(&self, frame: &mut ratatui::Frame, area: Rect) {

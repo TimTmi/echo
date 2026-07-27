@@ -70,6 +70,14 @@ impl SearchScreen {
         self.input_focused
     }
 
+    /// Whether the input bar currently has focus. `false` means focus
+    /// is on the results list (set after submitting a search).
+    /// Used by `App` to decide whether Esc should navigate back or
+    /// return focus to the search bar.
+    pub fn input_focused(&self) -> bool {
+        self.input_focused
+    }
+
     /// Read-only view of the current query text.
     pub fn query(&self) -> &str {
         &self.query
@@ -198,6 +206,10 @@ impl SearchScreen {
                 self.list_state.select(Some(prev));
                 true
             }
+            KeyCode::Esc if !self.input_focused => {
+                self.input_focused = true;
+                true
+            }
             KeyCode::Char(c) => {
                 self.query.insert(self.cursor, c);
                 self.cursor += 1;
@@ -289,8 +301,9 @@ impl SearchScreen {
                     String::new()
                 } else {
                     format!(
-                        " Found {} results. R to refresh, Esc to go back.",
-                        self.results.len()
+                        " Found {} results. {} to edit query, enter new query and press Enter.",
+                        self.results.len(),
+                        if self.input_focused { "Type" } else { "Press Esc then type" },
                     )
                 }
             }

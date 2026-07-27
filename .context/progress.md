@@ -83,6 +83,12 @@
 ## In Progress
 - None
 
+## Completed (this session)
+
+- **Ingestion screen cursor indicator (2026-07-28)**: `IngestionScreen::render_input_preview()` now calls `frame.set_cursor_position()` for all three input states (text/file/URL), using the tracked `cursor` field. Cursor x-position calculated as `area.x + 1 + cursor.min(preview.len())`. 157/157 tests pass.
+
+- **Search screen focus transfer after search (2026-07-28)**: After pressing Enter to search, `input_focused` is set to `false`, transferring focus to the results list. Pressing `Esc` returns focus to the search bar (eats the key). When focus is already on the search bar, `Esc` bubbles up to `App` and navigates back to Home (unchanged behavior). Added `SearchScreen::input_focused()` accessor for `App`. Status bar and results hint updated to reflect the new UX. 157/157 tests pass.
+
 ## Next Steps
 - (Phase 4) Multiple embedding providers (Ollama, OpenAI API-compatible)
 - (Phase 4) Search history / recent searches

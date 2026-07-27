@@ -431,7 +431,7 @@ impl App {
                 " [Q] Quit | [↑/↓] Navigate | [R] Refresh │ [N] New │ [D] Delete │ [Enter] Points │ [S] Search │ [Esc] Back "
             }
             ActiveScreen::Search => {
-                " [Q] Quit | Type query + Enter to search | [↑/↓] Navigate results | [Ctrl+Enter] View details | [Esc] Back "
+                " [Q] Quit | Type query + Enter to search | [↑/↓] Navigate results | [Ctrl+Enter] View details | [Esc] Back / focus input "
             }
             ActiveScreen::PointViewer => {
                 " [Q]uit | [↑/↓] Navigate | [N] Next page | [P] Prev | [R] Refresh | [D]elete | [Esc] Back "
@@ -582,8 +582,10 @@ impl App {
                     }
                     return true;
                 }
-                // Esc on search screen goes back to home
-                if code == KeyCode::Esc {
+                // Esc on search screen: if focus is on the search bar, go home;
+                // if focus was on results, SearchScreen already ate Esc above
+                // to restore focus to the search bar.
+                if code == KeyCode::Esc && self.search_screen.input_focused() {
                     self.active_screen = ActiveScreen::Home;
                     self.on_screen_enter();
                     return true;
