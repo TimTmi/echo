@@ -431,7 +431,7 @@ impl App {
                 " [Q] Quit | [↑/↓] Navigate | [R] Refresh │ [N] New │ [D] Delete │ [Enter] Points │ [S] Search │ [Esc] Back "
             }
             ActiveScreen::Search => {
-                " [Q] Quit | Type query + Enter to search | [↑/↓] Navigate results | [Ctrl+Enter] View details | [Esc] Back / focus input "
+                " [Q] Quit | [↑/↓] Navigate results | [Enter] Search / View details | [Esc] Back / focus input "
             }
             ActiveScreen::PointViewer => {
                 " [Q]uit | [↑/↓] Navigate | [N] Next page | [P] Prev | [R] Refresh | [D]elete | [Esc] Back "
@@ -564,9 +564,7 @@ impl App {
                     return true;
                 }
                 // Enter on a selected search result opens the point viewer
-                if code == KeyCode::Enter
-                    && modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
-                {
+                if code == KeyCode::Enter {
                     if let Some(result) = self.search_screen.selected_result() {
                         let collection = self.search_screen.collection().to_string();
                         let point = crate::qdrant::PointRecord {

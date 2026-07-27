@@ -164,13 +164,13 @@ impl SearchScreen {
         }
     }
 
-    pub fn handle_key(&mut self, code: KeyCode, modifiers: crossterm::event::KeyModifiers) -> bool {
+    pub fn handle_key(&mut self, code: KeyCode, _modifiers: crossterm::event::KeyModifiers) -> bool {
         if self.search_state != SearchState::Idle && self.search_state != SearchState::Done {
             return true;
         }
 
         match code {
-            KeyCode::Enter if !modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+            KeyCode::Enter if self.input_focused => {
                 let q = self.query.trim().to_string();
                 if q.is_empty() {
                     return true;
@@ -181,6 +181,8 @@ impl SearchScreen {
                 self.input_focused = false;
                 true
             }
+            // Enter on results list — fall through to App for PointViewer open
+            KeyCode::Enter if !self.input_focused => false,
             // Result navigation — before the general Char arm so 'j'/'k' aren't eaten
             KeyCode::Down if !self.input_focused && !self.results.is_empty() => {
                 let i = self.list_state.selected().unwrap_or(0);
