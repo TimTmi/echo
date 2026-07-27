@@ -9,8 +9,6 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use async_trait::async_trait;
 use tempfile::TempDir;
-use tracing;
-
 // ---------------------------------------------------------------------------
 // CommandRunner trait — injectable for testing subprocess-based extractors
 // ---------------------------------------------------------------------------
@@ -136,6 +134,7 @@ impl CommandRunner for RealCommandRunner {
 }
 
 /// Mock [`CommandRunner`] for use in tests.
+#[cfg(test)]
 #[derive(Debug)]
 pub(crate) struct MockCommandRunner {
     pub(crate) stdout: Vec<u8>,
@@ -153,6 +152,7 @@ pub(crate) struct MockCommandRunner {
     pub(crate) output_file_missing: bool,
 }
 
+#[cfg(test)]
 impl MockCommandRunner {
     pub(crate) fn new() -> Self {
         Self {
@@ -166,43 +166,36 @@ impl MockCommandRunner {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn with_exit_code(mut self, code: i32) -> Self {
         self.exit_code = code;
         self
     }
 
-    #[cfg(test)]
     pub(crate) fn with_exit_code_salvage(mut self, code: i32) -> Self {
         self.exit_code_salvage = Some(code);
         self
     }
 
-    #[cfg(test)]
     pub(crate) fn with_stderr(mut self, err: &[u8]) -> Self {
         self.stderr = err.to_vec();
         self
     }
 
-    #[cfg(test)]
     pub(crate) fn with_stdout(mut self, out: &[u8]) -> Self {
         self.stdout = out.to_vec();
         self
     }
 
-    #[cfg(test)]
     pub(crate) fn with_binary_missing(mut self) -> Self {
         self.binary_missing = true;
         self
     }
 
-    #[cfg(test)]
     pub(crate) fn with_output_file(mut self, content: &[u8]) -> Self {
         self.output_file_content = Some(content.to_vec());
         self
     }
 
-    #[cfg(test)]
     pub(crate) fn with_output_file_missing(mut self) -> Self {
         self.output_file_missing = true;
         self
@@ -285,9 +278,8 @@ impl CommandRunner for MockCommandRunner {
 
 /// Maximum bytes for file-based inputs (DOCX, PDF, images, audio/video).
 /// Files exceeding this limit are rejected before any extraction work.
-/// Matches [`MAX_DOWNLOAD_SIZE`](crate::ingestion::MAX_DOWNLOAD_SIZE) in
-/// `mod.rs` to keep a consistent pipeline-wide cap.
-pub(crate) const MAX_FILE_SIZE: usize = 100 * 1024 * 1024; // 100 MiB
+/// Shares value with [`MAX_DOWNLOAD_SIZE`] to keep a consistent pipeline-wide cap.
+pub(crate) const MAX_FILE_SIZE: usize = crate::ingestion::MAX_DOWNLOAD_SIZE;
 
 /// Input to the ingestion pipeline.
 #[derive(Debug, Clone, PartialEq)]

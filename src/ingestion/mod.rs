@@ -31,7 +31,7 @@ use chunker::ChunkConfig;
 
 /// Maximum number of bytes to download when fetching a URL.
 /// Content exceeding this limit is rejected to prevent runaway memory use.
-const MAX_DOWNLOAD_SIZE: usize = 100 * 1024 * 1024; // 100 MiB
+pub(crate) const MAX_DOWNLOAD_SIZE: usize = 100 * 1024 * 1024; // 100 MiB
 
 /// A single processed chunk ready for embedding.
 #[derive(Debug, Clone, PartialEq)]
