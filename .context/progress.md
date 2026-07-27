@@ -78,6 +78,8 @@
 
 - **Point ID collision fix (2026-07-27)**: ingestion used `chunk_index` (0,1,2…) as Qdrant point ID. Each new ingestion run reused same IDs → `PUT /points` upsert replaced old points instead of appending. Changed to `uuid::Uuid::new_v4()` per point. Added `uuid` crate dep (v4-only). 157/157 tests pass.
 
+- **Search results selectable → PointViewer (2026-07-27)**: `SearchScreen` results now render as a `List` with `ListState` — navigate with `↑/↓`/`j`/`k`. `Enter` on a selected result opens `PointViewerScreen` with the single point (id + payload) loaded directly. `PointViewerScreen` gained `set_collection_and_points()` for this. Back-navigation (`Esc` from PointViewer) uses `App.prev_screen` instead of hardcoded `Collections` — works correctly coming from Search or Collections. Status bar updated. 157/157 tests pass.
+
 ## In Progress
 - None
 

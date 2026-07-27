@@ -58,6 +58,23 @@ impl PointViewerScreen {
         }
     }
 
+    /// Set collection and immediately load a concrete set of points (from
+    /// search results, for example). Disables cursor-based pagination since
+    /// these points come from a search, not a scroll.
+    pub fn set_collection_and_points(&mut self, name: &str, points: Vec<PointRecord>) {
+        self.collection = name.to_string();
+        self.points = points;
+        self.page_offset = None;
+        self.next_offset = None;
+        self.prev_offsets.clear();
+        self.load_state = LoadState::Loaded;
+        if self.points.is_empty() {
+            self.list_state.select(None);
+        } else {
+            self.list_state.select(Some(0));
+        }
+    }
+
     pub fn set_collection(&mut self, name: &str) {
         self.collection = name.to_string();
         self.reset_to_first_page();

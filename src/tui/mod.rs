@@ -90,6 +90,8 @@ pub struct App {
     config_screen: ConfigScreen,
     /// Ingestion screen state.
     ingestion_screen: IngestionScreen,
+    /// Previous active screen (for back-navigation from PointViewer).
+    prev_screen: ActiveScreen,
     /// Most-recently-persisted default_collection name. After every key event
     /// on the Config screen we diff against this to detect a save and trigger
     /// the rename logic on Qdrant.
@@ -113,6 +115,7 @@ impl Default for App {
             config_screen: ConfigScreen::new(crate::config::Config::default()),
             ingestion_screen: IngestionScreen::new(),
             prev_persisted_default: None,
+            prev_screen: ActiveScreen::Home,
             runtime_handle: None,
         }
     }
@@ -147,6 +150,7 @@ impl App {
                 s
             },
             prev_persisted_default: config.default_collection.clone(),
+            prev_screen: ActiveScreen::Home,
             runtime_handle: None,
         }
     }
@@ -427,7 +431,7 @@ impl App {
                 " [Q] Quit | [↑/↓] Navigate | [R] Refresh │ [N] New │ [D] Delete │ [Enter] Points │ [S] Search │ [Esc] Back "
             }
             ActiveScreen::Search => {
-                " [Q] Quit | Type query + Enter to search | [Esc] Back "
+                " [Q] Quit | Type query + Enter to search | [↑/↓] Navigate results | [Enter] View details | [Esc] Back "
             }
             ActiveScreen::PointViewer => {
                 " [Q]uit | [↑/↓] Navigate | [N] Next page | [P] Prev | [R] Refresh | [D]elete | [Esc] Back "
@@ -524,6 +528,7 @@ impl App {
                     if let Some(idx) = self.collection_browser.selected_index() {
                         let names = self.collection_browser.collection_names();
                         if let Some(name) = names.get(idx) {
+                            self.prev_screen = ActiveScreen::Collections;
                             self.point_viewer.set_collection(name);
                             self.active_screen = ActiveScreen::PointViewer;
                             self.on_screen_enter();
@@ -556,6 +561,23 @@ impl App {
             ActiveScreen::Search => {
                 let handled = self.search_screen.handle_key(code);
                 if handled {
+                    return true;
+                }
+                // Enter on a selected search result opens the point viewer
+                if code == KeyCode::Enter {
+                    if let Some(result) = self.search_screen.selected_result() {
+                        let collection = self.search_screen.collection().to_string();
+                        let point = crate::qdrant::PointRecord {
+                            id: result.id.clone(),
+                            payload: result.payload.clone(),
+                        };
+                        self.prev_screen = ActiveScreen::Search;
+                        self.point_viewer
+                            .set_collection_and_points(&collection, vec![point]);
+                        self.active_screen = ActiveScreen::PointViewer;
+                        self.on_screen_enter();
+                        return true;
+                    }
                     return true;
                 }
                 // Esc on search screen goes back to home
@@ -593,9 +615,9 @@ impl App {
                     }
                     return true;
                 }
-                // Esc on point viewer returns to collections
+                // Esc on point viewer returns to the previous screen
                 if code == KeyCode::Esc {
-                    self.active_screen = ActiveScreen::Collections;
+                    self.active_screen = self.prev_screen;
                     self.on_screen_enter();
                     return true;
                 }

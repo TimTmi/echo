@@ -30,6 +30,7 @@ pub struct SearchScreen {
     input_focused: bool,
     collection: String,
     results: Vec<SearchResult>,
+    list_state: ratatui::widgets::ListState,
     search_state: SearchState,
     pending_query: String,
     pending_vector: Vec<f32>,
@@ -49,6 +50,7 @@ impl SearchScreen {
             input_focused: true,
             collection: String::new(),
             results: Vec::new(),
+            list_state: ratatui::widgets::ListState::default(),
             search_state: SearchState::Idle,
             pending_query: String::new(),
             pending_vector: Vec::new(),
@@ -78,6 +80,31 @@ impl SearchScreen {
     /// without a configured default).
     pub fn collection(&self) -> &str {
         &self.collection
+    }
+
+    /// Read-only view of the current results list.
+    pub fn results(&self) -> &[SearchResult] {
+        &self.results
+    }
+
+    /// Index of the currently selected result, if any.
+    pub fn selected_index(&self) -> Option<usize> {
+        self.list_state.selected()
+    }
+
+    /// The currently highlighted search result, if any.
+    pub fn selected_result(&self) -> Option<&SearchResult> {
+        let idx = self.list_state.selected()?;
+        self.results.get(idx)
+    }
+
+    /// Reset selection state (e.g. after a new search completes).
+    fn reset_selection(&mut self) {
+        if self.results.is_empty() {
+            self.list_state.select(None);
+        } else {
+            self.list_state.select(Some(0));
+        }
     }
 
     pub fn on_enter(&mut self) {
@@ -118,6 +145,7 @@ impl SearchScreen {
                     Ok(results) => {
                         self.results = results;
                         self.search_state = SearchState::Done;
+                        self.reset_selection();
                     }
                     Err(e) => {
                         self.search_state = SearchState::Error(format!("Search failed: {e:#}"));
@@ -143,6 +171,31 @@ impl SearchScreen {
                 self.results.clear();
                 self.search_state = SearchState::GeneratingEmbedding;
                 self.input_focused = false;
+                true
+            }
+            // Result navigation — before the general Char arm so 'j'/'k' aren't eaten
+            KeyCode::Down if !self.input_focused && !self.results.is_empty() => {
+                let i = self.list_state.selected().unwrap_or(0);
+                let next = (i + 1).min(self.results.len().saturating_sub(1));
+                self.list_state.select(Some(next));
+                true
+            }
+            KeyCode::Up if !self.input_focused && !self.results.is_empty() => {
+                let i = self.list_state.selected().unwrap_or(0);
+                let prev = i.saturating_sub(1);
+                self.list_state.select(Some(prev));
+                true
+            }
+            KeyCode::Char('j') if !self.input_focused && !self.results.is_empty() => {
+                let i = self.list_state.selected().unwrap_or(0);
+                let next = (i + 1).min(self.results.len().saturating_sub(1));
+                self.list_state.select(Some(next));
+                true
+            }
+            KeyCode::Char('k') if !self.input_focused && !self.results.is_empty() => {
+                let i = self.list_state.selected().unwrap_or(0);
+                let prev = i.saturating_sub(1);
+                self.list_state.select(Some(prev));
                 true
             }
             KeyCode::Char(c) => {
@@ -256,7 +309,7 @@ impl SearchScreen {
         frame.render_widget(paragraph, area);
     }
 
-    fn render_results(&self, frame: &mut ratatui::Frame, area: Rect) {
+    fn render_results(&mut self, frame: &mut ratatui::Frame, area: Rect) {
         if self.results.is_empty() {
             let msg = if self.search_state == SearchState::Idle {
                 " Enter a query above and press Enter to search."
@@ -305,9 +358,15 @@ impl SearchScreen {
                     .border_type(BorderType::Rounded)
                     .title(title)
                     .title_alignment(Alignment::Left),
+            )
+            .highlight_style(
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             );
 
-        frame.render_widget(list, area);
+        frame.render_stateful_widget(list, area, &mut self.list_state);
     }
 
     /// Build the display lines for a single search result.
