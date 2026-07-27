@@ -393,6 +393,10 @@ impl App {
                 Style::default().fg(Color::Cyan),
             )),
             Line::from(Span::styled(
+                "Press 'i' to open ingestion",
+                Style::default().fg(Color::Cyan),
+            )),
+            Line::from(Span::styled(
                 "Press 'g' to open config",
                 Style::default().fg(Color::Cyan),
             )),
