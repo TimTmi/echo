@@ -156,13 +156,13 @@ impl SearchScreen {
         }
     }
 
-    pub fn handle_key(&mut self, code: KeyCode) -> bool {
+    pub fn handle_key(&mut self, code: KeyCode, modifiers: crossterm::event::KeyModifiers) -> bool {
         if self.search_state != SearchState::Idle && self.search_state != SearchState::Done {
             return true;
         }
 
         match code {
-            KeyCode::Enter => {
+            KeyCode::Enter if !modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
                 let q = self.query.trim().to_string();
                 if q.is_empty() {
                     return true;
