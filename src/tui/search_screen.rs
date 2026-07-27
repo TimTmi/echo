@@ -61,6 +61,17 @@ impl SearchScreen {
         self.collection = name.to_string();
     }
 
+    /// Status bar hints for the current search sub-mode.
+    /// Search mode (input focused): show only Esc, Q, Enter.
+    /// Results mode (list focused): show navigation, Enter, Esc, Q.
+    pub fn status_bar_hints(&self) -> &'static str {
+        if self.input_focused {
+            " [Esc] Back | [Q] Quit | [Enter] Search "
+        } else {
+            " [↑/↓] j/k Navigate | [Enter] View details | [Esc] Focus input | [Q] Quit "
+        }
+    }
+
     /// Whether the screen is currently consuming text input. The search
     /// input is always focused once `on_enter` has run, so this returns
     /// `true` for the lifetime of the screen.

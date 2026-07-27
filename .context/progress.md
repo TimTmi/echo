@@ -89,6 +89,8 @@
 
 - **Search screen focus transfer after search (2026-07-28)**: After pressing Enter to search, `input_focused` is set to `false`, transferring focus to the results list. Pressing `Esc` returns focus to the search bar (eats the key). When focus is already on the search bar, `Esc` bubbles up to `App` and navigates back to Home (unchanged behavior). Added `SearchScreen::input_focused()` accessor for `App`. Status bar and results hint updated to reflect the new UX. 157/157 tests pass.
 
+- **Search status bar mode-aware hints (2026-07-28)**: Search screen status bar now shows only keybinds relevant to the current sub-mode. Search mode (input focused): `[Esc] Back | [Q] Quit | [Enter] Search`. Results mode (list focused): `[↑/↓] j/k Navigate | [Enter] View details | [Esc] Focus input | [Q] Quit`. Added `SearchScreen::status_bar_hints()` method; `render_status_bar` delegates to it. 157/157 tests pass.
+
 ## Next Steps
 - (Phase 4) Multiple embedding providers (Ollama, OpenAI API-compatible)
 - (Phase 4) Search history / recent searches
