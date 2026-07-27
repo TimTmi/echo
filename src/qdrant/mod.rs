@@ -486,7 +486,7 @@ pub struct SearchResult {
 /// A point to upsert into a Qdrant collection.
 #[derive(Debug, Clone)]
 pub struct UpsertPoint {
-    pub id: String,
+    pub id: serde_json::Value,
     pub vector: Vec<f32>,
     pub payload: Option<serde_json::Map<String, serde_json::Value>>,
 }
@@ -1160,7 +1160,7 @@ mod tests {
 
         let client = QdrantClient::new(server.url());
         let points = vec![UpsertPoint {
-            id: "p1".to_string(),
+            id: serde_json::Value::String("p1".to_string()),
             vector: vec![0.1, 0.2, 0.3],
             payload: Some(serde_json::Map::new()),
         }];
@@ -1180,7 +1180,7 @@ mod tests {
 
         let client = QdrantClient::new(server.url());
         let points = vec![UpsertPoint {
-            id: "p1".to_string(),
+            id: serde_json::Value::String("p1".to_string()),
             vector: vec![0.1; 1024],
             payload: None,
         }];
