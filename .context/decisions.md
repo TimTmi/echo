@@ -87,3 +87,10 @@
 - **Fix available**: Replace with `char_indices()` byte-range slicing to read directly from `&str` without intermediate Vec.
 - **Decision (deferred)**: Not worth touching now. Fix if the chunker becomes a measured bottleneck in Phase 4 performance work.
 
+### 2026-07-27: Chunker is character-based — not token-based
+- **Decision**: Keep chunker character-based. Corrected all doc comments that claimed token-based sizing.
+- **Reason**: The `text-splitter` crate defaults to a character counter (not tokens). No tokenizer (`tiktoken-rs` or otherwise) is wired in. The doc comment was stale and misleading — it described a behavior that never existed.
+- **Assessment**: BGE-M3's 8192-token limit is far above any chunk_size we set (256–1024 chars ≈ 64–256 tokens), so the character-based behavior works fine in practice. Inefficiency (underfilled context windows) is acceptable — premature tokenization is premature optimization per coding rules.
+- **If tokenization is later needed**: Wire `tiktoken-rs` into `chunk_structure_aware` via `text-splitter`'s `TokenCounter` trait. `chunk_sliding_window` and `apply_overlap` would also need token-aware semantics. This is not a one-line change — it's a meaningful refactor with test implications.
+- **Dead code note**: `estimate_token_count` (line 104) remains — it's a utility, not harmful, but unused. Can be removed in a future cleanup pass.
+

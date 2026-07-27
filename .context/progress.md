@@ -73,6 +73,9 @@
 ## In Progress
 - None
 
+## Just Completed
+- **Chunker doc comment fix (2026-07-27)**: `ChunkConfig.chunk_size` and `ChunkConfig.overlap` doc comments claimed token-based sizing with `tiktoken-rs` fallback — neither was true. All sizes are character-based. Fixed module-level docs, field docs, and added a decision record (`decisions.md`) with rationale and path-to-tokenization if ever needed. No behavior change.
+
 ## Next Steps
 - (Phase 4) Multiple embedding providers (Ollama, OpenAI API-compatible)
 - (Phase 4) Search history / recent searches

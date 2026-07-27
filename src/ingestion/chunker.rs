@@ -1,18 +1,18 @@
 //! Text chunking module.
 //!
 //! Uses the `text-splitter` crate for structure-aware and sliding-window
-//! chunking. Supports configurable chunk size (in tokens or characters),
-//! overlap, and mode selection.
+//! chunking. All sizes and overlaps are **character-based** — not tokens.
+//! The underlying `text-splitter` crate defaults to a character counter;
+//! no tokenizer is wired in. See `decisions.md` for rationale.
 
 use text_splitter::{ChunkConfig as TextSplitterConfig, TextSplitter};
 
 /// Configuration for the chunking strategy.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChunkConfig {
-    /// Target chunk size in tokens (if `tiktoken-rs` is available) or
-    /// characters (fallback).
+    /// Target chunk size in **characters** (not tokens — no tokenizer wired).
     pub chunk_size: usize,
-    /// Number of tokens/characters to overlap between consecutive chunks.
+    /// Number of characters to overlap between consecutive chunks.
     pub overlap: usize,
     /// Chunking mode: structure-aware (markdown/code) vs. sliding window.
     pub mode: ChunkMode,
