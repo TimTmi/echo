@@ -289,37 +289,9 @@ impl SearchScreen {
                     serde_json::Value::Number(n) => n.to_string(),
                     _ => format!("{:?}", r.id),
                 };
-                let payload_preview = r
-                    .payload
-                    .as_ref()
-                    .and_then(|p| {
-                        p.iter()
-                            .find(|(_, v)| v.is_string())
-                            .map(|(k, v)| format!("{}: {}", k, v.as_str().unwrap_or("")))
-                    })
-                    .unwrap_or_default();
+                let preview_lines: Vec<Line> = Self::build_preview_lines(i, score, &id_str, &r.payload);
 
-                let content = vec![
-                    Line::from(vec![
-                        Span::styled(format!("#{}  ", i), Style::default().fg(Color::DarkGray)),
-                        Span::styled(
-                            format!("Score: {:.4}", score),
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(
-                            format!("  ID: {}", id_str),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                    ]),
-                    Line::from(Span::styled(
-                        payload_preview,
-                        Style::default().fg(Color::White),
-                    )),
-                ];
-
-                ListItem::new(content)
+                ListItem::new(preview_lines)
             })
             .collect();
 
@@ -336,5 +308,129 @@ impl SearchScreen {
             );
 
         frame.render_widget(list, area);
+    }
+
+    /// Build the display lines for a single search result.
+    /// Priority: (1) "text" field → truncated text content,
+    ///           (2) "source_display" / "source" → file path/URL,
+    ///           (3) first string field found → key: value,
+    ///           (4) fallback → "(no content)".
+    fn build_preview_lines(
+        i: usize,
+        score: f64,
+        id_str: &str,
+        payload: &Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> Vec<Line<'static>> {
+        // Priority 1: "text" field — actual chunk content
+        if let Some(text) = payload
+            .as_ref()
+            .and_then(|p| p.get("text"))
+            .and_then(|v| v.as_str())
+        {
+            let max_chars = 200;
+            let truncated = if text.len() > max_chars {
+                format!("{}...", &text[..max_chars])
+            } else {
+                text.to_string()
+            };
+            return vec![
+                Line::from(vec![
+                    Span::styled(format!("#{}  ", i), Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("Score: {:.4}", score),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("  ID: {id_str}"),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::styled("Text: ", Style::default().fg(Color::Cyan)),
+                    Span::styled(truncated, Style::default().fg(Color::White)),
+                ]),
+            ];
+        }
+
+        // Priority 2: "source_display" or "source" — file path / URL
+        if let Some(source_val) = payload
+            .as_ref()
+            .and_then(|p| p.get("source_display").or_else(|| p.get("source")))
+            .and_then(|v| v.as_str())
+        {
+            let source = source_val.to_string();
+            return vec![
+                Line::from(vec![
+                    Span::styled(format!("#{}  ", i), Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("Score: {:.4}", score),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("  ID: {}", id_str),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::styled("Source: ".to_string(), Style::default().fg(Color::Cyan)),
+                    Span::styled(source, Style::default().fg(Color::White)),
+                ]),
+            ];
+        }
+
+        // Priority 3: first string field found
+        if let Some((k, v)) = payload
+            .as_ref()
+            .and_then(|p| p.iter().find(|(_, v)| v.is_string()))
+        {
+            let val = v.as_str().unwrap_or("").to_string();
+            return vec![
+                Line::from(vec![
+                    Span::styled(format!("#{}  ", i), Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("Score: {:.4}", score),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("  ID: {}", id_str),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::styled(
+                        format!("{k}: "),
+                        Style::default().fg(Color::Cyan),
+                    ),
+                    Span::styled(val, Style::default().fg(Color::White)),
+                ]),
+            ];
+        }
+
+        // Fallback: no recognizable content
+        vec![
+            Line::from(vec![
+                Span::styled(format!("#{}  ", i), Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("Score: {:.4}", score),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("  ID: {}", id_str),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]),
+            Line::from(Span::styled(
+                "(no content)".to_string(),
+                Style::default().fg(Color::DarkGray),
+            )),
+        ]
     }
 }
