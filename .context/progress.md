@@ -74,6 +74,8 @@
 
 - **Whisper transcription routed through CommandRunner (2026-07-27)**: Added `run_to_file_salvage` method to `CommandRunner` trait — returns `(exit_code, file_content, stderr)` regardless of exit status, enabling mock-driven tests of the salvage-on-failure path. Added `exit_code_salvage` field to `MockCommandRunner` so tests can have `check_whisper` pass (`exit_code=0`) while `run_to_file_salvage` fails independently. Refactored `AudioVideoExtractor::extract` whisper invocation (previously direct `std::process::Command::new`) to use `self.runner.run_to_file_salvage`. 3 new tests: `test_audio_transcription_success`, `test_audio_transcription_salvaged`, `test_audio_transcription_failed`. 157/157 tests pass.
 
+- **Tracing logs routed to file instead of stderr (2026-07-27)**: `tracing_subscriber::fmt()` previously wrote to stderr, which corrupted the TUI alternate screen display because ingestion tracing calls (info/debug/warn) bypassed the ratatui render loop and spilled directly onto the terminal. Changed to `with_writer(Mutex::new(log_file))` pointing at `echo.log` in CWD, with `with_ansi(false)` for clean file output. RUST_LOG env override still works. 157/157 tests pass.
+
 ## In Progress
 - None
 
