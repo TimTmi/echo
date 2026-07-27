@@ -78,6 +78,15 @@ impl ChunkMetadata {
     }
 }
 
+/// Format the input source for log messages.
+fn source_display(input: &Input) -> String {
+    match &input.source {
+        Source::File(p) => p.to_string_lossy().to_string(),
+        Source::Url(u) => u.clone(),
+        Source::Text(_) => "<text input>".to_string(),
+    }
+}
+
 /// Run the full extract → clean → chunk pipeline.
 ///
 /// 1. If `input` is a URL, fetches the content via HTTP.
@@ -90,15 +99,6 @@ impl ChunkMetadata {
 /// Returns an error if the extractor for the given content type is not found,
 /// the extraction itself fails, the HTTP fetch fails, or any required system
 /// dependency is missing.
-/// Format the input source for log messages.
-fn source_display(input: &Input) -> String {
-    match &input.source {
-        Source::File(p) => p.to_string_lossy().to_string(),
-        Source::Url(u) => u.clone(),
-        Source::Text(_) => "<text input>".to_string(),
-    }
-}
-
 pub async fn process(input: Input, config: ChunkConfig) -> anyhow::Result<Vec<Chunk>> {
     let src = source_display(&input);
     tracing::info!("ingestion pipeline starting: source={src}, content_type={}, chunk_size={}, overlap={}, mode={:?}",
