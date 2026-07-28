@@ -80,16 +80,14 @@
 
 - **Search results selectable → PointViewer (2026-07-27)**: `SearchScreen` results now render as a `List` with `ListState` — navigate with `↑/↓`/`j`/`k`. `Enter` on a selected result opens `PointViewerScreen` with the single point (id + payload) loaded directly. `PointViewerScreen` gained `set_collection_and_points()` for this. Back-navigation (`Esc` from PointViewer) uses `App.prev_screen` instead of hardcoded `Collections` — works correctly coming from Search or Collections. Status bar updated. 157/157 tests pass.
 
-## In Progress
-- None
-
-## Completed (this session)
-
 - **Ingestion screen cursor indicator (2026-07-28)**: `IngestionScreen::render_input_preview()` now calls `frame.set_cursor_position()` for all three input states (text/file/URL), using the tracked `cursor` field. Cursor x-position calculated as `area.x + 1 + cursor.min(preview.len())`. 157/157 tests pass.
 
 - **Search screen focus transfer after search (2026-07-28)**: After pressing Enter to search, `input_focused` is set to `false`, transferring focus to the results list. Pressing `Esc` returns focus to the search bar (eats the key). When focus is already on the search bar, `Esc` bubbles up to `App` and navigates back to Home (unchanged behavior). Added `SearchScreen::input_focused()` accessor for `App`. Status bar and results hint updated to reflect the new UX. 157/157 tests pass.
 
 - **Search status bar mode-aware hints (2026-07-28)**: Search screen status bar now shows only keybinds relevant to the current sub-mode. Search mode (input focused): `[Esc] Back | [Q] Quit | [Enter] Search`. Results mode (list focused): `[↑/↓] j/k Navigate | [Enter] View details | [Esc] Focus input | [Q] Quit`. Added `SearchScreen::status_bar_hints()` method; `render_status_bar` delegates to it. 157/157 tests pass.
+
+## In Progress
+- None
 
 ## Next Steps
 - (Phase 4) Multiple embedding providers (Ollama, OpenAI API-compatible)
