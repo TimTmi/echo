@@ -310,6 +310,21 @@ impl App {
             }
             ActiveScreen::PointViewer => {
                 if let Some(handle) = &self.runtime_handle {
+                    // Drain a pending delete before ticking (user waited for y/n).
+                    if let Some((collection, point_id)) = self.point_viewer.drain_pending_delete() {
+                        if !collection.is_empty() {
+                            let result = handle.block_on(
+                                self.qdrant_client.delete_points(&collection, &[point_id]),
+                            );
+                            match result {
+                                Ok(()) => self.point_viewer._trigger_refresh(),
+                                Err(e) => {
+                                    self.error_message =
+                                        Some(format!("Delete failed: {e:#}"));
+                                }
+                            }
+                        }
+                    }
                     self.point_viewer.tick(&self.qdrant_client, handle);
                 }
             }
@@ -433,9 +448,7 @@ impl App {
                 " [Q] Quit | [↑/↓] [j/k] Navigate | [R] Refresh │ [N] New │ [D] Delete │ [Enter] Points │ [S] Search │ [Esc] Back "
             }
             ActiveScreen::Search => self.search_screen.status_bar_hints(),
-            ActiveScreen::PointViewer => {
-                " [Q]uit | [↑/↓] [j/k] Navigate | [N] Next page | [P] Prev | [R] Refresh | [D]elete | [T] View | [Esc] Back "
-            }
+            ActiveScreen::PointViewer => self.point_viewer.status_bar_hints(),
             ActiveScreen::Config => {
                 " [Q] Quit | [↑/↓] [j/k] Select | [Enter] Edit | [s] Save | [d] Discard | [Esc] Back "
             }
@@ -593,27 +606,6 @@ impl App {
             ActiveScreen::PointViewer => {
                 let handled = self.point_viewer.handle_key(code);
                 if handled {
-                    return true;
-                }
-                // 'd' on point viewer deletes the selected point.
-                if matches!(code, KeyCode::Char('d') | KeyCode::Char('D')) {
-                    if let (Some(point_id), Some(handle)) = (
-                        self.point_viewer.selected_point_id(),
-                        self.runtime_handle.as_ref(),
-                    ) {
-                        let collection = self.point_viewer.collection().to_string();
-                        if !collection.is_empty() {
-                            let result = handle.block_on(
-                                self.qdrant_client.delete_points(&collection, &[point_id]),
-                            );
-                            match result {
-                                Ok(()) => self.point_viewer._trigger_refresh(),
-                                Err(e) => {
-                                    self.error_message = Some(format!("Delete failed: {e:#}"));
-                                }
-                            }
-                        }
-                    }
                     return true;
                 }
                 // Esc on point viewer returns to the previous screen
@@ -889,5 +881,118 @@ mod tests {
             ),
             "'q' should be inserted into the create buffer"
         );
+    }
+
+    // -- Point viewer delete confirmation -----------------------------------
+    // Point viewer now uses a confirm step before deleting, matching the
+    // collection browser pattern.
+
+    #[test]
+    fn point_viewer_d_opens_confirm() {
+        let mut pv = crate::tui::point_viewer::PointViewerScreen::new();
+        pv._test_seed(vec![crate::qdrant::PointRecord {
+            id: serde_json::json!("abc-123"),
+            payload: None,
+        }]);
+
+        // Pressing 'd' transitions to ConfirmDelete
+        assert!(pv.handle_key(KeyCode::Char('d')));
+        assert_eq!(*pv._test_mode(), crate::tui::point_viewer::Mode::ConfirmDelete);
+    }
+
+    #[test]
+    fn point_viewer_confirm_y_proceeds() {
+        let mut pv = crate::tui::point_viewer::PointViewerScreen::new();
+        pv._test_seed(vec![crate::qdrant::PointRecord {
+            id: serde_json::json!("abc-123"),
+            payload: None,
+        }]);
+
+        // 'd' then 'y' -> PendingDelete
+        pv.handle_key(KeyCode::Char('d'));
+        assert!(pv.handle_key(KeyCode::Char('y')));
+        assert_eq!(*pv._test_mode(), crate::tui::point_viewer::Mode::PendingDelete);
+    }
+
+    #[test]
+    fn point_viewer_confirm_n_cancels() {
+        let mut pv = crate::tui::point_viewer::PointViewerScreen::new();
+        pv._test_seed(vec![crate::qdrant::PointRecord {
+            id: serde_json::json!("abc-123"),
+            payload: None,
+        }]);
+
+        pv.handle_key(KeyCode::Char('d'));
+        assert!(pv.handle_key(KeyCode::Char('n')));
+        assert_eq!(*pv._test_mode(), crate::tui::point_viewer::Mode::Browsing);
+    }
+
+    #[test]
+    fn point_viewer_confirm_esc_cancels() {
+        let mut pv = crate::tui::point_viewer::PointViewerScreen::new();
+        pv._test_seed(vec![crate::qdrant::PointRecord {
+            id: serde_json::json!("abc-123"),
+            payload: None,
+        }]);
+
+        pv.handle_key(KeyCode::Char('d'));
+        assert!(pv.handle_key(KeyCode::Esc));
+        assert_eq!(*pv._test_mode(), crate::tui::point_viewer::Mode::Browsing);
+    }
+
+    #[test]
+    fn point_viewer_confirm_swallows_other_keys() {
+        let mut pv = crate::tui::point_viewer::PointViewerScreen::new();
+        pv._test_seed(vec![crate::qdrant::PointRecord {
+            id: serde_json::json!("abc-123"),
+            payload: None,
+        }]);
+
+        pv.handle_key(KeyCode::Char('d'));
+        // In confirm mode, 'j' (navigation) should be swallowed.
+        assert!(pv.handle_key(KeyCode::Char('j')));
+        // Still in confirm mode.
+        assert_eq!(*pv._test_mode(), crate::tui::point_viewer::Mode::ConfirmDelete);
+    }
+
+    #[test]
+    fn point_viewer_drain_pending_delete_returns_id() {
+        let mut pv = crate::tui::point_viewer::PointViewerScreen::new();
+        pv._test_seed(vec![crate::qdrant::PointRecord {
+            id: serde_json::json!("abc-123"),
+            payload: None,
+        }]);
+
+        pv.handle_key(KeyCode::Char('d'));
+        pv.handle_key(KeyCode::Char('y'));
+
+        let result = pv.drain_pending_delete();
+        assert!(result.is_some());
+        let (collection, point_id) = result.unwrap();
+        assert_eq!(collection, "test");
+        assert_eq!(point_id, serde_json::json!("abc-123"));
+        // Mode is reset to Browsing after drain
+        assert_eq!(*pv._test_mode(), crate::tui::point_viewer::Mode::Browsing);
+    }
+
+    #[test]
+    fn point_viewer_drain_pending_delete_idle() {
+        let mut pv = crate::tui::point_viewer::PointViewerScreen::new();
+        pv._test_seed(vec![crate::qdrant::PointRecord {
+            id: serde_json::json!("abc-123"),
+            payload: None,
+        }]);
+
+        // No delete pending -> drain returns None
+        assert!(pv.drain_pending_delete().is_none());
+    }
+
+    #[test]
+    fn point_viewer_d_on_no_selection_does_nothing() {
+        let mut pv = crate::tui::point_viewer::PointViewerScreen::new();
+        pv._test_seed(vec![]);
+        // No point selected -> 'd' still returns true but mode stays Browsing
+        assert!(pv.handle_key(KeyCode::Char('d')));
+        assert_eq!(*pv._test_mode(), crate::tui::point_viewer::Mode::Browsing);
     }
 }

@@ -28,6 +28,18 @@ enum LoadState {
     Error(String),
 }
 
+/// Sub-mode for the point viewer screen.
+///
+/// `Browsing` is the default list + detail view. `ConfirmDelete` shows a y/n
+/// prompt. `PendingDelete` waits for the delete request to land.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum Mode {
+    #[default]
+    Browsing,
+    ConfirmDelete,
+    PendingDelete,
+}
+
 /// View mode for the detail panel.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ViewMode {
@@ -61,6 +73,7 @@ pub struct PointViewerScreen {
     list_state: ListState,
     load_state: LoadState,
     view_mode: ViewMode,
+    mode: Mode,
 }
 
 impl Default for PointViewerScreen {
@@ -80,6 +93,7 @@ impl PointViewerScreen {
             list_state: ListState::default(),
             load_state: LoadState::Idle,
             view_mode: ViewMode::Raw,
+            mode: Mode::Browsing,
         }
     }
 
@@ -171,7 +185,38 @@ impl PointViewerScreen {
         }
     }
 
+    /// Seed test points (test helper).
+    #[cfg(test)]
+    pub fn _test_seed(&mut self, points: Vec<PointRecord>) {
+        self.collection = "test".to_string();
+        self.points = points;
+        self.load_state = LoadState::Loaded;
+        if self.points.is_empty() {
+            self.list_state.select(None);
+        } else {
+            self.list_state.select(Some(0));
+        }
+    }
+
+    /// Read the current mode (test helper).
+    #[cfg(test)]
+    pub fn _test_mode(&self) -> &Mode {
+        &self.mode
+    }
+
     pub fn handle_key(&mut self, code: KeyCode) -> bool {
+        // Mode-aware dispatch. PendingDelete swallows every keypress so the
+        // user can't fire another mutation before the in-flight one lands.
+        match self.mode {
+            Mode::Browsing => self.handle_browse_key(code),
+            Mode::ConfirmDelete => self.handle_confirm_key(code),
+            Mode::PendingDelete => true,
+        }
+    }
+
+    /// Key handler for the default `Browsing` mode: navigation, page, refresh,
+    /// view toggle, and the entry point into the delete confirm flow.
+    fn handle_browse_key(&mut self, code: KeyCode) -> bool {
         if self.load_state == LoadState::Loading {
             return !matches!(code, KeyCode::Esc);
         }
@@ -247,8 +292,42 @@ impl PointViewerScreen {
                 }
                 true
             }
+            KeyCode::Char('d') | KeyCode::Char('D') => {
+                if self.selected_point().is_some() {
+                    self.mode = Mode::ConfirmDelete;
+                }
+                true
+            }
             _ => false,
         }
+    }
+
+    /// Key handler for the delete confirm. `y` arms PendingDelete, `n`/Esc cancels.
+    fn handle_confirm_key(&mut self, code: KeyCode) -> bool {
+        match code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                self.mode = Mode::PendingDelete;
+                true
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.mode = Mode::Browsing;
+                true
+            }
+            _ => true,
+        }
+    }
+
+    /// Check whether a delete is pending and return the collection + point ID
+    /// to delete. Resets the mode to `Browsing` after extracting the ID.
+    /// Returns `None` if no delete is pending.
+    pub fn drain_pending_delete(&mut self) -> Option<(String, serde_json::Value)> {
+        if self.mode != Mode::PendingDelete {
+            return None;
+        }
+        let point_id = self.selected_point_id()?;
+        let collection = self.collection.clone();
+        self.mode = Mode::Browsing;
+        Some((collection, point_id))
     }
 
     pub fn render(&mut self, frame: &mut ratatui::Frame, area: Rect) {
@@ -395,6 +474,21 @@ impl PointViewerScreen {
             )
             .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, area);
+    }
+
+    /// Status bar hints varying by sub-mode.
+    pub fn status_bar_hints(&self) -> &'static str {
+        match self.mode {
+            Mode::Browsing => {
+                " [Q]uit | [↑/↓] [j/k] Navigate | [N] Next page | [P] Prev | [R] Refresh | [D]elete | [T] View | [Esc] Back "
+            }
+            Mode::ConfirmDelete => {
+                " Delete point? [Y]es | [N]o | [Esc] Cancel "
+            }
+            Mode::PendingDelete => {
+                " Deleting point... "
+            }
+        }
     }
 }
 

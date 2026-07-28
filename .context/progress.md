@@ -90,6 +90,8 @@
 
 - **Collection browser j/k navigation (2026-07-28)**: Added `j`/`J` and `k`/`K` to `CollectionBrowserScreen::handle_browse_key` with same clamp semantics and detail-triggering side effects as `Up`/`Down`. 157/157 tests pass.
 
+- **Point viewer delete confirmation (2026-07-28)**: Pressing `d`/`D` on PointViewer now enters a `ConfirmDelete` sub-mode with y/n prompt instead of deleting immediately. `Y` arms `PendingDelete`, `N`/`Esc` cancels back to `Browsing`. The actual HTTP call is deferred to `App::tick()` via `drain_pending_delete()`. Status bar hints are mode-aware. 8 new unit tests. 165/165 tests pass.
+
 ## In Progress
 - None
 
