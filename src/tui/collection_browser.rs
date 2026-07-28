@@ -360,6 +360,34 @@ impl CollectionBrowserScreen {
                 }
                 true
             }
+            KeyCode::Char('j') | KeyCode::Char('J') => {
+                if self.collection_names.is_empty() {
+                    return true;
+                }
+                let i = self.list_state.selected().unwrap_or(0);
+                let new_i = (i + 1).min(self.collection_names.len().saturating_sub(1));
+                self.list_state.select(Some(new_i));
+                self.detail_error = None;
+                let sel_name = &self.collection_names[new_i];
+                if !self.collection_details.contains_key(sel_name) {
+                    self.loading_detail = Some(sel_name.clone());
+                }
+                true
+            }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                if self.collection_names.is_empty() {
+                    return true;
+                }
+                let i = self.list_state.selected().unwrap_or(0);
+                let new_i = i.saturating_sub(1);
+                self.list_state.select(Some(new_i));
+                self.detail_error = None;
+                let sel_name = &self.collection_names[new_i];
+                if !self.collection_details.contains_key(sel_name) {
+                    self.loading_detail = Some(sel_name.clone());
+                }
+                true
+            }
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 let selected = self.list_state.selected();
                 if let Some(idx) = selected

@@ -281,13 +281,14 @@ impl ConfigScreen {
         let chunks = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(1),
-            Constraint::Length(2),
+            Constraint::Length(0),
         ])
         .split(area);
 
         self.render_header(frame, chunks[0]);
         self.render_field_list(frame, chunks[1]);
-        self.render_footer(frame, chunks[2]);
+        // Footer slot kept at Length(0) so field list fills the screen.
+        // self.render_footer(frame, chunks[2]);
     }
 
     fn render_header(&self, frame: &mut ratatui::Frame, area: Rect) {
@@ -378,28 +379,28 @@ impl ConfigScreen {
         ]
     }
 
-    fn render_footer(&self, frame: &mut ratatui::Frame, area: Rect) {
-        let mut lines: Vec<Line> = Vec::new();
-        if self.editing {
-            lines.push(Line::from(Span::styled(
-                " Editing: type to insert, Backspace delete, Enter commit, Esc cancel ",
-                Style::default().fg(Color::Yellow),
-            )));
-        } else {
-            lines.push(Line::from(Span::styled(
-                " [Up/Down] select | [Enter] edit | [s] save | [d] discard | [Esc] back ",
-                Style::default().fg(Color::DarkGray),
-            )));
-        }
-        if let Some((msg, _)) = &self.flash {
-            lines.push(Line::from(Span::styled(
-                format!(" {msg} "),
-                Style::default().fg(Color::Green),
-            )));
-        }
-        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
-        frame.render_widget(paragraph, area);
-    }
+    // fn render_footer(&self, frame: &mut ratatui::Frame, area: Rect) {
+    //     let mut lines: Vec<Line> = Vec::new();
+    //     if self.editing {
+    //         lines.push(Line::from(Span::styled(
+    //             " Editing: type to insert, Backspace delete, Enter commit, Esc cancel ",
+    //             Style::default().fg(Color::Yellow),
+    //         )));
+    //     } else {
+    //         lines.push(Line::from(Span::styled(
+    //             " [Up/Down] select | [Enter] edit | [s] save | [d] discard | [Esc] back ",
+    //             Style::default().fg(Color::DarkGray),
+    //         )));
+    //     }
+    //     if let Some((msg, _)) = &self.flash {
+    //         lines.push(Line::from(Span::styled(
+    //             format!(" {msg} "),
+    //             Style::default().fg(Color::Green),
+    //         )));
+    //     }
+    //     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    //     frame.render_widget(paragraph, area);
+    // }
 }
 
 #[cfg(test)]

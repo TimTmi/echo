@@ -86,6 +86,10 @@
 
 - **Search status bar mode-aware hints (2026-07-28)**: Search screen status bar now shows only keybinds relevant to the current sub-mode. Search mode (input focused): `[Esc] Back | [Q] Quit | [Enter] Search`. Results mode (list focused): `[↑/↓] j/k Navigate | [Enter] View details | [Esc] Focus input | [Q] Quit`. Added `SearchScreen::status_bar_hints()` method; `render_status_bar` delegates to it. 157/157 tests pass.
 
+- **Point viewer j/k navigation (2026-07-28)**: Added `j`/`J` and `k`/`K` to `PointViewerScreen::handle_key` for list navigation, matching search screen clamp semantics (non-wrapping). Existing `Up`/`Down` wrap behavior untouched. 157/157 tests pass.
+
+- **Collection browser j/k navigation (2026-07-28)**: Added `j`/`J` and `k`/`K` to `CollectionBrowserScreen::handle_browse_key` with same clamp semantics and detail-triggering side effects as `Up`/`Down`. 157/157 tests pass.
+
 ## In Progress
 - None
 

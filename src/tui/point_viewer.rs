@@ -195,6 +195,24 @@ impl PointViewerScreen {
                 self.list_state.select(Some(new_i));
                 true
             }
+            KeyCode::Char('j') | KeyCode::Char('J') => {
+                if self.points.is_empty() {
+                    return true;
+                }
+                let i = self.list_state.selected().unwrap_or(0);
+                let new_i = (i + 1).min(self.points.len().saturating_sub(1));
+                self.list_state.select(Some(new_i));
+                true
+            }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                if self.points.is_empty() {
+                    return true;
+                }
+                let i = self.list_state.selected().unwrap_or(0);
+                let new_i = i.saturating_sub(1);
+                self.list_state.select(Some(new_i));
+                true
+            }
             KeyCode::Char('n') | KeyCode::Char('N') => {
                 if self.load_state == LoadState::Loaded && self.next_offset.is_some() {
                     self.prev_offsets.push(self.page_offset.clone());

@@ -426,16 +426,18 @@ impl App {
     /// Render the status bar at the bottom.
     fn render_status_bar(&self, frame: &mut ratatui::Frame, area: Rect) {
         let hints = match self.active_screen {
-            ActiveScreen::Home => " [Q] Quit | [C] Collections | [S] Search | [I] Ingest | [G] Config ",
+            ActiveScreen::Home => {
+                " [Q] Quit | [C] Collections | [S] Search | [I] Ingest | [G] Config "
+            }
             ActiveScreen::Collections => {
-                " [Q] Quit | [↑/↓] Navigate | [R] Refresh │ [N] New │ [D] Delete │ [Enter] Points │ [S] Search │ [Esc] Back "
+                " [Q] Quit | [↑/↓] [j/k] Navigate | [R] Refresh │ [N] New │ [D] Delete │ [Enter] Points │ [S] Search │ [Esc] Back "
             }
             ActiveScreen::Search => self.search_screen.status_bar_hints(),
             ActiveScreen::PointViewer => {
-                " [Q]uit | [↑/↓] Navigate | [N] Next page | [P] Prev | [R] Refresh | [D]elete | [T] View | [Esc] Back "
+                " [Q]uit | [↑/↓] [j/k] Navigate | [N] Next page | [P] Prev | [R] Refresh | [D]elete | [T] View | [Esc] Back "
             }
             ActiveScreen::Config => {
-                " [Q] Quit | [↑/↓] Select | [Enter] Edit | [s] Save | [d] Discard | [Esc] Back "
+                " [Q] Quit | [↑/↓] [j/k] Select | [Enter] Edit | [s] Save | [d] Discard | [Esc] Back "
             }
             ActiveScreen::Ingestion => {
                 " [t]ext [f]ile [u]rl | Enter to process | [y] upsert | [n] discard | [Esc] Back "
@@ -460,11 +462,11 @@ impl App {
         let paragraph = Paragraph::new(Line::from(spans))
             .alignment(Alignment::Left)
             .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .title(" Keys ")
-                .title_alignment(Alignment::Left),
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title(" Keys ")
+                    .title_alignment(Alignment::Left),
             );
 
         frame.render_widget(paragraph, area);
@@ -607,8 +609,7 @@ impl App {
                             match result {
                                 Ok(()) => self.point_viewer._trigger_refresh(),
                                 Err(e) => {
-                                    self.error_message =
-                                        Some(format!("Delete failed: {e:#}"));
+                                    self.error_message = Some(format!("Delete failed: {e:#}"));
                                 }
                             }
                         }
@@ -692,7 +693,8 @@ impl App {
                     .as_deref()
                     .unwrap_or("")
                     .to_string();
-                self.ingestion_screen.set_default_collection(&default_collection);
+                self.ingestion_screen
+                    .set_default_collection(&default_collection);
                 self.active_screen = ActiveScreen::Ingestion;
                 self.on_screen_enter();
                 true

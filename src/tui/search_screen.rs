@@ -68,7 +68,7 @@ impl SearchScreen {
         if self.input_focused {
             " [Esc] Back | [Q] Quit | [Enter] Search "
         } else {
-            " [↑/↓] j/k Navigate | [Enter] View details | [Esc] Focus input | [Q] Quit "
+            " [↑/↓] [j/k] Navigate | [Enter] View details | [Esc] Focus input | [Q] Quit "
         }
     }
 
@@ -175,7 +175,11 @@ impl SearchScreen {
         }
     }
 
-    pub fn handle_key(&mut self, code: KeyCode, _modifiers: crossterm::event::KeyModifiers) -> bool {
+    pub fn handle_key(
+        &mut self,
+        code: KeyCode,
+        _modifiers: crossterm::event::KeyModifiers,
+    ) -> bool {
         if self.search_state != SearchState::Idle && self.search_state != SearchState::Done {
             return true;
         }
@@ -316,7 +320,11 @@ impl SearchScreen {
                     format!(
                         " Found {} results. {} to edit query, enter new query and press Enter.",
                         self.results.len(),
-                        if self.input_focused { "Type" } else { "Press Esc then type" },
+                        if self.input_focused {
+                            "Type"
+                        } else {
+                            "Press Esc then type"
+                        },
                     )
                 }
             }
@@ -368,7 +376,8 @@ impl SearchScreen {
                     serde_json::Value::Number(n) => n.to_string(),
                     _ => format!("{:?}", r.id),
                 };
-                let preview_lines: Vec<Line> = Self::build_preview_lines(i, score, &id_str, &r.payload);
+                let preview_lines: Vec<Line> =
+                    Self::build_preview_lines(i, score, &id_str, &r.payload);
 
                 ListItem::new(preview_lines)
             })
@@ -488,10 +497,7 @@ impl SearchScreen {
                     ),
                 ]),
                 Line::from(vec![
-                    Span::styled(
-                        format!("{k}: "),
-                        Style::default().fg(Color::Cyan),
-                    ),
+                    Span::styled(format!("{k}: "), Style::default().fg(Color::Cyan)),
                     Span::styled(val, Style::default().fg(Color::White)),
                 ]),
             ];
