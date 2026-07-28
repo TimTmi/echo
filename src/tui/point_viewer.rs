@@ -28,6 +28,29 @@ enum LoadState {
     Error(String),
 }
 
+/// View mode for the detail panel.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ViewMode {
+    Raw,
+    Clean,
+}
+
+impl ViewMode {
+    fn label(self) -> &'static str {
+        match self {
+            ViewMode::Raw => " raw ",
+            ViewMode::Clean => " clean ",
+        }
+    }
+
+    fn toggle(self) -> Self {
+        match self {
+            ViewMode::Raw => ViewMode::Clean,
+            ViewMode::Clean => ViewMode::Raw,
+        }
+    }
+}
+
 /// Point viewer screen state.
 pub struct PointViewerScreen {
     collection: String,
@@ -37,6 +60,7 @@ pub struct PointViewerScreen {
     prev_offsets: Vec<Option<Value>>,
     list_state: ListState,
     load_state: LoadState,
+    view_mode: ViewMode,
 }
 
 impl Default for PointViewerScreen {
@@ -55,6 +79,7 @@ impl PointViewerScreen {
             prev_offsets: Vec::new(),
             list_state: ListState::default(),
             load_state: LoadState::Idle,
+            view_mode: ViewMode::Raw,
         }
     }
 
@@ -191,6 +216,10 @@ impl PointViewerScreen {
                 }
                 true
             }
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                self.view_mode = self.view_mode.toggle();
+                true
+            }
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 if self.load_state == LoadState::Loaded {
                     self.points.clear();
@@ -297,12 +326,6 @@ impl PointViewerScreen {
         let content: Vec<Line> = match self.selected_point() {
             Some(p) => {
                 let id_str = id_to_string(&p.id);
-                let json_pretty = match p.payload.as_ref() {
-                    Some(payload) => {
-                        serde_json::to_string_pretty(payload).unwrap_or_else(|_| "{}".to_string())
-                    }
-                    None => "{}".to_string(),
-                };
 
                 let mut lines = vec![
                     Line::from(Span::styled(
@@ -313,12 +336,28 @@ impl PointViewerScreen {
                     )),
                     Line::from(""),
                 ];
-                for json_line in json_pretty.lines() {
-                    lines.push(Line::from(Span::styled(
-                        format!(" {} ", json_line),
-                        Style::default().fg(Color::White),
-                    )));
+
+                match self.view_mode {
+                    ViewMode::Raw => {
+                        let json_pretty = match p.payload.as_ref() {
+                            Some(payload) => serde_json::to_string_pretty(payload)
+                                .unwrap_or_else(|_| "{}".to_string()),
+                            None => "{}".to_string(),
+                        };
+                        for json_line in json_pretty.lines() {
+                            lines.push(Line::from(Span::styled(
+                                format!(" {} ", json_line),
+                                Style::default().fg(Color::White),
+                            )));
+                        }
+                    }
+                    ViewMode::Clean => {
+                        if let Some(payload) = p.payload.as_ref() {
+                            flatten_clean(&Value::Object(payload.clone()), &mut lines, 1);
+                        }
+                    }
                 }
+
                 lines
             }
             None => vec![Line::from(Span::styled(
@@ -327,12 +366,13 @@ impl PointViewerScreen {
             ))],
         };
 
+        let title = format!(" Payload{}", self.view_mode.label());
         let paragraph = Paragraph::new(content)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .title(" Payload ")
+                    .title(title)
                     .title_alignment(Alignment::Left),
             )
             .wrap(Wrap { trim: false });
@@ -345,5 +385,73 @@ fn id_to_string(id: &Value) -> String {
         Value::String(s) => s.clone(),
         Value::Number(n) => n.to_string(),
         other => other.to_string(),
+    }
+}
+
+/// Format a JSON value as clean key-value lines (no JSON syntax noise).
+///
+/// Nested objects and arrays are abbreviated as `{…}` / `[n items]` at
+/// depth >= 2 to keep the view scannable.
+fn flatten_clean(value: &Value, lines: &mut Vec<Line>, depth: usize) {
+    match value {
+        Value::Object(map) => {
+            for (key, val) in map {
+                let indent = "  ".repeat(depth);
+                match val {
+                    Value::String(s) => {
+                        lines.push(Line::from(Span::styled(
+                            format!(" {indent}{key}: {s}"),
+                            Style::default().fg(Color::White),
+                        )));
+                    }
+                    Value::Number(n) => {
+                        lines.push(Line::from(Span::styled(
+                            format!(" {indent}{key}: {n}"),
+                            Style::default().fg(Color::Cyan),
+                        )));
+                    }
+                    Value::Bool(b) => {
+                        lines.push(Line::from(Span::styled(
+                            format!(" {indent}{key}: {b}"),
+                            Style::default().fg(Color::Magenta),
+                        )));
+                    }
+                    Value::Null => {
+                        lines.push(Line::from(Span::styled(
+                            format!(" {indent}{key}: null"),
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                    }
+                    Value::Object(_) => {
+                        if depth < 2 {
+                            let prefix = format!(" {indent}{key}: ");
+                            lines.push(Line::from(Span::styled(
+                                prefix,
+                                Style::default().fg(Color::White),
+                            )));
+                            flatten_clean(val, lines, depth + 1);
+                        } else {
+                            lines.push(Line::from(Span::styled(
+                                format!(" {indent}{key}: {{…}}"),
+                                Style::default().fg(Color::DarkGray),
+                            )));
+                        }
+                    }
+                    Value::Array(arr) => {
+                        let label = format!(" {} {key}: [{} item(s)]", indent, arr.len());
+                        lines.push(Line::from(Span::styled(
+                            label,
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                    }
+                }
+            }
+        }
+        other => {
+            lines.push(Line::from(Span::styled(
+                format!(" {}", other),
+                Style::default().fg(Color::White),
+            )));
+        }
     }
 }

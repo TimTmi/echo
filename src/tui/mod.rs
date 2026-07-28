@@ -432,7 +432,7 @@ impl App {
             }
             ActiveScreen::Search => self.search_screen.status_bar_hints(),
             ActiveScreen::PointViewer => {
-                " [Q]uit | [↑/↓] Navigate | [N] Next page | [P] Prev | [R] Refresh | [D]elete | [Esc] Back "
+                " [Q]uit | [↑/↓] Navigate | [N] Next page | [P] Prev | [R] Refresh | [D]elete | [T] View | [Esc] Back "
             }
             ActiveScreen::Config => {
                 " [Q] Quit | [↑/↓] Select | [Enter] Edit | [s] Save | [d] Discard | [Esc] Back "
