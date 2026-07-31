@@ -94,6 +94,8 @@
 
 - **Multi-line cursor position fix (2026-07-31)**: `SearchScreen`, `IngestionScreen`, and `CollectionBrowserScreen` cursor positioning previously used flat character offset (`cursor_x = area.x + 1 + cursor`) with hardcoded `cursor_y = area.y + 1`, causing cursor to stay at the end of the first visual line when pasted text contained `\n`. Added `compute_cursor_col_row()` helper in `collection_browser.rs` that walks the input text character-by-character, tracking newlines and soft word-wrap at `content_width`. Applied to all three screens. `CollectionBrowserScreen` now sets the real terminal cursor (previously used only a faux `|` character). 165/165 tests pass.
 
+- **Newline escape in text previews (2026-07-31)**: `render_chunk_list` (ingestion review), `build_preview_lines` (search results), and `flatten_clean` (point viewer clean mode) embedded raw `\n` characters from chunk/payload text directly into ratatui `Span`/`Line` widgets, breaking single-line-per-item layout. Replaced `\n` with ↵ (U+21B5) in display-only paths. No data stored in Qdrant changed. 166/166 tests pass.
+
 ## In Progress
 - None
 
