@@ -305,8 +305,10 @@ impl SearchScreen {
         frame.render_widget(paragraph, area);
 
         if self.input_focused {
-            let cursor_x = area.x + 1 + self.cursor.min(self.query.len()) as u16;
-            let cursor_y = area.y + 1;
+            let content_width = (area.width.max(2) - 2) as usize;
+            let (col, row) = super::collection_browser::compute_cursor_col_row(&self.query, self.cursor, content_width);
+            let cursor_x = area.x + 1 + col;
+            let cursor_y = area.y + 1 + row;
             frame.set_cursor_position(ratatui::layout::Position::new(cursor_x, cursor_y));
         }
     }

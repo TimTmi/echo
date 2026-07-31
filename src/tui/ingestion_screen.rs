@@ -518,8 +518,11 @@ impl IngestionScreen {
         frame.render_widget(paragraph, area);
 
         if cursor_visible {
-            let cursor_x = area.x + 1 + cursor.min(preview.len()) as u16;
-            let cursor_y = area.y + 1;
+            let content_width = (area.width.max(2) - 2) as usize;
+            let display_cursor = cursor.min(preview.len());
+            let (col, row) = super::collection_browser::compute_cursor_col_row(&preview, display_cursor, content_width);
+            let cursor_x = area.x + 1 + col;
+            let cursor_y = area.y + 1 + row;
             frame.set_cursor_position(ratatui::layout::Position::new(cursor_x, cursor_y));
         }
     }

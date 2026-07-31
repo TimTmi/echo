@@ -92,6 +92,8 @@
 
 - **Point viewer delete confirmation (2026-07-28)**: Pressing `d`/`D` on PointViewer now enters a `ConfirmDelete` sub-mode with y/n prompt instead of deleting immediately. `Y` arms `PendingDelete`, `N`/`Esc` cancels back to `Browsing`. The actual HTTP call is deferred to `App::tick()` via `drain_pending_delete()`. Status bar hints are mode-aware. 8 new unit tests. 165/165 tests pass.
 
+- **Multi-line cursor position fix (2026-07-31)**: `SearchScreen`, `IngestionScreen`, and `CollectionBrowserScreen` cursor positioning previously used flat character offset (`cursor_x = area.x + 1 + cursor`) with hardcoded `cursor_y = area.y + 1`, causing cursor to stay at the end of the first visual line when pasted text contained `\n`. Added `compute_cursor_col_row()` helper in `collection_browser.rs` that walks the input text character-by-character, tracking newlines and soft word-wrap at `content_width`. Applied to all three screens. `CollectionBrowserScreen` now sets the real terminal cursor (previously used only a faux `|` character). 165/165 tests pass.
+
 ## In Progress
 - None
 

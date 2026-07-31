@@ -541,6 +541,18 @@ impl CollectionBrowserScreen {
             )
             .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, area);
+
+        // Set the real terminal cursor for the Creating input field.
+        if let Mode::Creating { buffer, cursor } = &self.mode {
+            let content_width = (area.width.max(2) - 2) as usize;
+            // Line 2 of create_form_lines is "Name: <input>".  The input
+            // starts after "Name: " (6 chars).  Compute where the cursor
+            // visually lands within that input region, respecting wrapping.
+            let (col, row) = compute_cursor_col_row(buffer, *cursor, content_width.saturating_sub(6));
+            let cursor_x = area.x + 1 + 6 + col;
+            let cursor_y = area.y + 1 + 2 + row;
+            frame.set_cursor_position(ratatui::layout::Position::new(cursor_x, cursor_y));
+        }
     }
 
     /// Lines for the create form: name field with cursor, hint, optional flash.
@@ -749,6 +761,47 @@ impl CollectionBrowserScreen {
 // ---------------------------------------------------------------------------
 // Free helpers — input editing
 // ---------------------------------------------------------------------------
+
+/// Compute the visual (column, row) of a character-cursor within a string
+/// that will be rendered in a box of `content_width` columns. Accounts for
+/// hard newlines (`\n`) and soft line wrapping at `content_width`.
+/// Returns `(col, row)` where both are 0-based offsets within the content area
+/// (caller adds border offsets).
+pub fn compute_cursor_col_row(text: &str, cursor: usize, content_width: usize) -> (u16, u16) {
+    if content_width == 0 {
+        return (0, 0);
+    }
+    // Walk through characters up to cursor, tracking visual position.
+    let mut col: usize = 0;
+    let mut row: usize = 0;
+    for (i, ch) in text.chars().enumerate() {
+        if i >= cursor {
+            break;
+        }
+        match ch {
+            '\n' => {
+                col = 0;
+                row += 1;
+            }
+            '\t' => {
+                // A conservative approximation: advance to next 4-column stop.
+                col = (col + 4) / 4 * 4;
+            }
+            _ => {
+                col += 1;
+            }
+        }
+        // Soft wrap at content_width boundary (only on non-\n chars).
+        if col >= content_width && ch != '\n' {
+            col = 0;
+            row += 1;
+        }
+    }
+    // Clamp final column to prevent overflow (terminal cursor wraps on its own,
+    // but we report the logical position).
+    let col = col.min(content_width.saturating_sub(1));
+    (col as u16, row as u16)
+}
 
 /// Insert `c` into `buffer` at the given char-cursor. Cursor advances by one.
 /// Char-aware so multi-byte characters don't split a code point.
