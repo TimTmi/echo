@@ -8,7 +8,7 @@ use crate::ingestion::chunker::{ChunkConfig, ChunkMode};
 use crate::ingestion::extractor::{Input, Source};
 use crate::ingestion::{process, Chunk};
 use crate::qdrant::{QdrantClient, UpsertPoint};
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -144,12 +144,12 @@ impl IngestionScreen {
         self.flash = Some((msg.into(), Instant::now()));
     }
 
-    pub fn handle_key(&mut self, code: KeyCode) -> bool {
+    pub fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> bool {
         match &self.state {
             ScreenState::Idle => self.handle_idle_key(code),
             ScreenState::InputText { .. }
             | ScreenState::InputFilePath { .. }
-            | ScreenState::InputUrl { .. } => self.handle_input_key(code),
+            | ScreenState::InputUrl { .. } => self.handle_input_key(code, modifiers),
             ScreenState::Reviewing => match code {
                 KeyCode::Char('y') | KeyCode::Char('Y') => {
                     if self.chunks.is_empty() {
@@ -217,8 +217,16 @@ impl IngestionScreen {
         }
     }
 
-    fn handle_input_key(&mut self, code: KeyCode) -> bool {
+    fn handle_input_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> bool {
         match code {
+            // In InputText mode, plain Enter inserts a newline; Shift+Enter submits.
+            // In InputFilePath / InputUrl, Enter always submits (single-line inputs).
+            KeyCode::Enter if matches!(self.state, ScreenState::InputText { .. })
+                && !modifiers.contains(KeyModifiers::SHIFT) =>
+            {
+                self.insert_char('\n');
+                true
+            }
             KeyCode::Enter => {
                 let buf = self.buffer().to_string();
                 if buf.trim().is_empty() {
@@ -399,6 +407,10 @@ impl IngestionScreen {
         let mode_hint = match &self.state {
             ScreenState::Idle =>
                 " [t]ext [f]ile [u]rl | [c]ycle mode | [+/-] chunk size | [Del] clear collection | Esc back",
+            ScreenState::InputText { .. } =>
+                " [Enter] new line | [Shift+Enter] submit | [Esc] cancel ",
+            ScreenState::InputFilePath { .. } | ScreenState::InputUrl { .. } =>
+                " [Enter] submit | [Esc] cancel ",
             ScreenState::Reviewing => " [y] upsert | [n] discard",
             ScreenState::Done | ScreenState::Error(_) => " Press any key to continue",
             _ => "",
@@ -492,18 +504,26 @@ impl IngestionScreen {
     }
 
     fn render_input_preview(&self, frame: &mut ratatui::Frame, area: Rect) {
-        let (input_title, preview, cursor) = match &self.state {
+        let (input_title, preview_lines, cursor) = match &self.state {
             ScreenState::InputText { buffer, cursor } => {
-                let txt = if buffer.is_empty() { " <type or paste text here>".to_string() } else { buffer[..buffer.len().min(500)].to_string() };
-                (" Text Input ", txt, *cursor)
+                let lines: Vec<Line> = if buffer.is_empty() {
+                    vec![Line::from(Span::styled(" <type or paste text here>", Style::default().fg(Color::DarkGray)))]
+                } else {
+                    buffer.lines().map(|l| {
+                        Line::from(Span::styled(format!(" {}", l), Style::default().fg(Color::White)))
+                    }).collect()
+                };
+                (" Text Input ", lines, *cursor)
             }
             ScreenState::InputFilePath { buffer, cursor } => {
-                if buffer.is_empty() { (" File Path ", " <enter file path>".to_string(), *cursor) } else { (" File Path ", format!(" {}", buffer), *cursor) }
+                let txt = if buffer.is_empty() { " <enter file path>".to_string() } else { format!(" {}", buffer) };
+                (" File Path ", vec![Line::from(Span::styled(txt, Style::default().fg(Color::White)))], *cursor)
             }
             ScreenState::InputUrl { buffer, cursor } => {
-                if buffer.is_empty() { (" URL ", " <enter URL>".to_string(), *cursor) } else { (" URL ", format!(" {}", buffer), *cursor) }
+                let txt = if buffer.is_empty() { " <enter URL>".to_string() } else { format!(" {}", buffer) };
+                (" URL ", vec![Line::from(Span::styled(txt, Style::default().fg(Color::White)))], *cursor)
             }
-            _ => (" Ready ", " Press [t]ext [f]ile [u]rl to start".to_string(), 0),
+            _ => (" Ready ", vec![Line::from(Span::styled(" Press [t]ext [f]ile [u]rl to start", Style::default().fg(Color::DarkGray)))], 0),
         };
 
         let cursor_visible = matches!(
@@ -511,7 +531,7 @@ impl IngestionScreen {
             ScreenState::InputText { .. } | ScreenState::InputFilePath { .. } | ScreenState::InputUrl { .. }
         );
 
-        let paragraph = Paragraph::new(Line::from(Span::styled(&preview, Style::default().fg(Color::White))))
+        let paragraph = Paragraph::new(preview_lines)
             .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
                 .title(input_title).title_alignment(Alignment::Left))
             .wrap(Wrap { trim: false });
@@ -519,8 +539,23 @@ impl IngestionScreen {
 
         if cursor_visible {
             let content_width = (area.width.max(2) - 2) as usize;
-            let display_cursor = cursor.min(preview.len());
-            let (col, row) = super::collection_browser::compute_cursor_col_row(&preview, display_cursor, content_width);
+            // For InputText, use the full buffer as the cursor reference string.
+            // For single-line inputs, use the single preview line.
+            let cursor_ref: String = match &self.state {
+                ScreenState::InputText { buffer, .. } => buffer.clone(),
+                _ => {
+                    // Reconstruct the single line (without " <type or paste...>" placeholders)
+                    match &self.state {
+                        ScreenState::InputFilePath { buffer, .. } => buffer.clone(),
+                        ScreenState::InputUrl { buffer, .. } => buffer.clone(),
+                        _ => String::new(),
+                    }
+                }
+            };
+            let display_cursor = cursor.min(cursor_ref.len());
+            let (mut col, row) = super::collection_browser::compute_cursor_col_row(&cursor_ref, display_cursor, content_width);
+            // Each rendered line has a leading space, so offset the cursor column by 1.
+            col = col.saturating_add(1);
             let cursor_x = area.x + 1 + col;
             let cursor_y = area.y + 1 + row;
             frame.set_cursor_position(ratatui::layout::Position::new(cursor_x, cursor_y));
@@ -621,18 +656,28 @@ mod tests {
     fn input_text_insert_and_backspace() {
         let mut s = make_screen();
         s.state = ScreenState::InputText { buffer: String::new(), cursor: 0 };
-        assert!(s.handle_input_key(KeyCode::Char('h')));
-        assert!(s.handle_input_key(KeyCode::Char('i')));
+        assert!(s.handle_input_key(KeyCode::Char('h'), KeyModifiers::NONE));
+        assert!(s.handle_input_key(KeyCode::Char('i'), KeyModifiers::NONE));
         assert_eq!(s.buffer(), "hi");
-        s.handle_input_key(KeyCode::Backspace);
+        s.handle_input_key(KeyCode::Backspace, KeyModifiers::NONE);
         assert_eq!(s.buffer(), "h");
     }
 
     #[test]
-    fn input_text_empty_enter_shows_flash() {
+    fn input_text_enter_inserts_newline() {
+        let mut s = make_screen();
+        s.state = ScreenState::InputText { buffer: "hello".to_string(), cursor: 5 };
+        assert!(s.handle_input_key(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(s.buffer(), "hello\n");
+        assert!(matches!(s.state, ScreenState::InputText { .. }));
+        assert!(s.flash.is_none());
+    }
+
+    #[test]
+    fn input_text_shift_enter_empty_shows_flash() {
         let mut s = make_screen();
         s.state = ScreenState::InputText { buffer: String::new(), cursor: 0 };
-        assert!(s.handle_input_key(KeyCode::Enter));
+        assert!(s.handle_input_key(KeyCode::Enter, KeyModifiers::SHIFT));
         assert!(matches!(s.state, ScreenState::InputText { .. }));
         assert!(s.flash.is_some());
     }
@@ -641,7 +686,7 @@ mod tests {
     fn input_text_esc_returns_to_idle() {
         let mut s = make_screen();
         s.state = ScreenState::InputText { buffer: "hello".to_string(), cursor: 5 };
-        assert!(s.handle_input_key(KeyCode::Esc));
+        assert!(s.handle_input_key(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(s.state, ScreenState::Idle);
     }
 
@@ -661,7 +706,7 @@ mod tests {
             }},
         ];
         s.state = ScreenState::Reviewing;
-        assert!(s.handle_key(KeyCode::Char('y')));
+        assert!(s.handle_key(KeyCode::Char('y'), KeyModifiers::NONE));
         assert!(matches!(s.state, ScreenState::GeneratingEmbeddings { index: 0, total: 2 }));
     }
 
@@ -674,7 +719,7 @@ mod tests {
             chunk_index: 0, total_chunks: 1,
         }}];
         s.state = ScreenState::Reviewing;
-        assert!(s.handle_key(KeyCode::Char('n')));
+        assert!(s.handle_key(KeyCode::Char('n'), KeyModifiers::NONE));
         assert_eq!(s.state, ScreenState::Idle);
         assert!(s.chunks.is_empty());
     }
@@ -699,7 +744,7 @@ mod tests {
     fn done_state_any_key_returns_to_idle() {
         let mut s = make_screen();
         s.state = ScreenState::Done;
-        assert!(s.handle_key(KeyCode::Char(' ')));
+        assert!(s.handle_key(KeyCode::Char(' '), KeyModifiers::NONE));
         assert_eq!(s.state, ScreenState::Idle);
     }
 
@@ -707,7 +752,7 @@ mod tests {
     fn error_state_any_key_returns_to_idle() {
         let mut s = make_screen();
         s.state = ScreenState::Error("something broke".to_string());
-        assert!(s.handle_key(KeyCode::Char(' ')));
+        assert!(s.handle_key(KeyCode::Char(' '), KeyModifiers::NONE));
         assert_eq!(s.state, ScreenState::Idle);
     }
 }

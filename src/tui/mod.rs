@@ -631,7 +631,7 @@ impl App {
                 }
             }
             ActiveScreen::Ingestion => {
-                let handled = self.ingestion_screen.handle_key(code);
+                let handled = self.ingestion_screen.handle_key(code, modifiers);
                 if handled {
                     return true;
                 }
