@@ -571,7 +571,8 @@ impl IngestionScreen {
             return;
         }
         let items: Vec<ListItem> = self.chunks.iter().map(|chunk| {
-            let preview = if chunk.text.len() > 200 { format!("{}...", &chunk.text[..200]) } else { chunk.text.clone() };
+            let raw = if chunk.text.len() > 200 { format!("{}...", &chunk.text[..200]) } else { chunk.text.clone() };
+            let preview = raw.replace('\n', "↵");
             ListItem::new(vec![
                 Line::from(Span::styled(
                     format!("  [{}:{}] {}", chunk.metadata.extractor, chunk.metadata.chunk_index, chunk.metadata.source_display),

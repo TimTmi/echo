@@ -429,6 +429,7 @@ impl SearchScreen {
             } else {
                 text.to_string()
             };
+            let truncated = truncated.replace('\n', "↵");
             return vec![
                 Line::from(vec![
                     Span::styled(format!("#{}  ", i), Style::default().fg(Color::DarkGray)),

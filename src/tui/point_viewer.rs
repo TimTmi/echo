@@ -511,8 +511,9 @@ fn flatten_clean(value: &Value, lines: &mut Vec<Line>, depth: usize) {
                 let indent = "  ".repeat(depth);
                 match val {
                     Value::String(s) => {
+                        let display = s.replace('\n', "↵");
                         lines.push(Line::from(Span::styled(
-                            format!(" {indent}{key}: {s}"),
+                            format!(" {indent}{key}: {display}"),
                             Style::default().fg(Color::White),
                         )));
                     }
