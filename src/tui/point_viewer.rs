@@ -370,33 +370,21 @@ impl PointViewerScreen {
                 .enumerate()
                 .map(|(i, p)| {
                     let id_str = id_to_string(&p.id);
-                    let preview = p
-                        .payload
-                        .as_ref()
-                        .and_then(|pl| pl.iter().find(|(_, v)| v.is_string()))
-                        .map(|(_, v)| v.as_str().unwrap_or("").to_string())
-                        .unwrap_or_default();
-                    let preview_truncated = if preview.chars().count() > 60 {
-                        let cut: String = preview.chars().take(60).collect();
-                        format!("{cut}…")
-                    } else {
-                        preview
-                    };
-                    ListItem::new(vec![
-                        Line::from(vec![
-                            Span::styled(format!("#{i} "), Style::default().fg(Color::DarkGray)),
-                            Span::styled(
-                                id_str,
-                                Style::default()
-                                    .fg(Color::Yellow)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                        ]),
-                        Line::from(Span::styled(
-                            preview_truncated,
-                            Style::default().fg(Color::White),
-                        )),
-                    ])
+                    let preview_lines =
+                        payload_preview_lines(p.payload.as_ref(), 55, 3);
+                    let mut item_lines = vec![Line::from(vec![
+                        Span::styled(format!("#{i} "), Style::default().fg(Color::DarkGray)),
+                        Span::styled(
+                            id_str,
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ])];
+                    for line in preview_lines {
+                        item_lines.push(line);
+                    }
+                    ListItem::new(item_lines)
                 })
                 .collect(),
         };
@@ -490,6 +478,63 @@ impl PointViewerScreen {
             }
         }
     }
+}
+
+/// Extract preview lines from a payload, showing only the interesting
+/// fields (e.g. `text`, `source`) up to `max_fields` lines, each
+/// truncated to `max_width` characters.
+///
+/// Priority order: `text` (main content), `source_display` / `source`
+/// (origin), then up to `max_fields - 2` other string fields. Non-string
+/// fields are skipped. Returns an empty vec for empty or absent payloads,
+/// or a single "(no content)" line when no interesting fields are found.
+fn payload_preview_lines(
+    payload: Option<&serde_json::Map<String, Value>>,
+    max_width: usize,
+    max_fields: usize,
+) -> Vec<Line<'static>> {
+    let Some(map) = payload else {
+        return Vec::new();
+    };
+    if map.is_empty() {
+        return Vec::new();
+    }
+
+    // Priority-ordered field extraction.
+    let important_keys = ["text", "source_display", "source"];
+    let mut lines = Vec::new();
+    let mut remaining_slots = max_fields;
+
+    for key in &important_keys {
+        if remaining_slots == 0 {
+            break;
+        }
+        if let Some(val) = map.get(*key) {
+            if let Value::String(s) = val {
+                let cleaned = s.replace('\n', "↵");
+                let display = if cleaned.chars().count() > max_width {
+                    let cut: String = cleaned.chars().take(max_width).collect();
+                    format!("{cut}…")
+                } else {
+                    cleaned
+                };
+                lines.push(Line::from(Span::styled(
+                    format!("  {key}: {display}"),
+                    Style::default().fg(Color::White),
+                )));
+                remaining_slots -= 1;
+            }
+        }
+    }
+
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (no content)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    lines
 }
 
 fn id_to_string(id: &Value) -> String {

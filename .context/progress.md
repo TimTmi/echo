@@ -96,6 +96,10 @@
 
 - **Newline escape in text previews (2026-07-31)**: `render_chunk_list` (ingestion review), `build_preview_lines` (search results), and `flatten_clean` (point viewer clean mode) embedded raw `\n` characters from chunk/payload text directly into ratatui `Span`/`Line` widgets, breaking single-line-per-item layout. Replaced `\n` with ↵ (U+21B5) in display-only paths. No data stored in Qdrant changed. 166/166 tests pass.
 
+- **Point viewer payload preview in list (2026-08-01)**: Each point in the viewer's left-panel list now shows up to 3 payload key-value lines (truncated at 55 chars each) beneath the UUID line, instead of only the first string field. Added `payload_preview_lines()` helper that handles all JSON value types; if there are more fields than shown, a "… and N more field(s)" footer is appended. 166/166 tests pass.
+
+- **Refined to show only important fields (2026-08-01)**: `payload_preview_lines()` now only checks priority fields `text` → `source_display` → `source` instead of dumping all payload keys. Shows `(no content)` when none of those fields exist. 166/166 tests pass.
+
 ## In Progress
 - None
 
